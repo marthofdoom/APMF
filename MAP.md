@@ -2130,7 +2130,7 @@ Spec MFO `Docs/research/2026-11/hm1-seat-brief.md`. Six `write_vfunc` seats, all
 Exit Water asked -> `combatapproach::CarryOf` -> `movelogic::Step` (pure, `tools/move_order`). Slot table: 64 seqlock slots written on the game
 thread by ch.24 (`Publish` from Poll, `Clear` from Apply / End / Release / Poll, `ResetAll`), runtime block written by the actor's combat thread.
 `feat/hm1-pa2`: `Uncarried` (already fleeing -> `kDenyOnly`, gated on `kSeatRanked` = S1's verdict, kept while the area is disabled, carried as
-`Snapshot::ranks`), `Step`'s short stop (`a_returnEnded` = asked from the selector's ACT with a travel answer behind it), `PhaseNow` (a
+`Snapshot::ranks`; `FleeLatched` keeps it 1.5 s past the last real isFleeing), `Step`'s short stop (`a_returnEnded` = asked from the selector's ACT with a travel answer behind it), `PhaseNow` (a
 phase is not reported 1 s after the last pick). Line throttles: `kChangeLineMs` per order, `kRepointLineMs` per actor (`g_gate`).
 - **To add:** a mode = `Strict` / `Counts` in `MoveOrderLogic.h`. A child that passes = `kAskChildren`. A denied child = one `ValueThunk`
   row (`kValueSeats` + `InstallValue`). A tunable = `MoveTuning`. Lifecycle = `Publish` / `Clear` callers in `channels/CombatApproach.cpp`.

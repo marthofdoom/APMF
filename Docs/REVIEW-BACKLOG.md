@@ -1506,3 +1506,6 @@ Three things the engine's road gives up or leaves open, each said in `core/Comba
 - **(SEV-5) F9:** "tag moveorder-* falls in FacetForTag -> kCore in the census, like substrate-*."
 - **(SEV-5)** SLOTS: "a stale Decide that passed Read before Clear can write a few Run atomics of the next owner (us window; 2 s quarantine)."
 - **Author, against feat/hm1-pa2:** a Dodge that takes the movement resource during a return also re-enters the selector through its act, so it counts as an ended return (it only matters without 8 units of progress).
+
+### feat/hm1-pa2 (Opus 5.5 tier-A review, 2026-11-24, against 29450028): nothing above SEV-3; H1 fixed on the branch
+- **(SEV-4) H2:** "any act re-entry (dodge, stagger, attack taking movement) counts as an ended return. Inside the leash: accepted Standing with stopError <= leashR. Outside: 1 s stand in contact, repeat. Bounded, visible in SUMMARY. Backlog."

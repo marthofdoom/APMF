@@ -31,6 +31,8 @@ namespace apmf::movelogic {
         static constexpr std::uint32_t kShortStopEnds  = 2;       // ended returns in a row without progress
         static constexpr float         kProgress       = 8.0f;    // a return that brought him this much nearer was progress
         static constexpr std::uint64_t kShortHoldMs    = 1000;    // past the leash and no progress: stand this long, then try again
+        static constexpr std::uint64_t kFleeLatchMs    = 1500;    // Flee stays refused this long after isFleeing was last really seen:
+                                                                  //   a switched-off area is looked at again only every 1.0 s
     };
 
     inline constexpr float kCoordBound = 4000000.0f;   // channels/CombatApproach.h kPointCoordBound (asserted there)
@@ -91,6 +93,14 @@ namespace apmf::movelogic {
     // Hide are refused and nothing else is answered. Only where the claim outranks the source it substitutes.
     constexpr Pick Uncarried(bool a_passed, bool a_outranked, bool a_fleeing, bool a_ranks) {
         return !a_passed && !a_outranked && a_fleeing && a_ranks ? Pick::kDenyOnly : Pick::kOrig;
+    }
+
+    // The `a_fleeing` of Uncarried for one uncarried pick. Flee's context pop clears isFleeing before the area is back
+    // (up to 1 s) while Flee's value still says yes, so the answer outlives the flag by kFleeLatchMs. Only a pick that
+    // really saw the flag moves `a_seenMs` (0 = never).
+    inline bool FleeLatched(std::uint64_t& a_seenMs, bool a_isFleeing, std::uint64_t a_now) {
+        if (a_isFleeing) a_seenMs = a_now;
+        return a_isFleeing || (a_seenMs != 0 && a_now - a_seenMs <= MoveTuning::kFleeLatchMs);
     }
 
     // The phase to report `a_silentMs` after the last pick.

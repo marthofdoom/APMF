@@ -27,7 +27,8 @@ extern "C" __declspec(dllimport) unsigned long __stdcall GetPrivateProfileIntA(
 //   V0 child 0 (Essential Down, a native 10000 s wait): YES to stand.
 //   V2 child 2 (Flee), V3 child 3 (Hide): NO. Also while a flee that began before the order was carried keeps his area
 //     switched off (kDenyOnly: nothing else is answered; the selector drops Flee at its next re-pick, the engine's own
-//     context pop clears CombatState::isFleeing, the area comes back, S1 carries it). isFleeing is READ, never written.
+//     context pop clears CombatState::isFleeing, the area comes back within 1 s, S1 carries it; FleeLatched keeps the refusal
+//     over that second). isFleeing is READ, never written.
 //   V4 child 4 (Return To Combat Area, the native go-to-centre): YES to travel.
 // Every other answer is the engine's own. Nothing is failed and no child is entered by Harbinger (no act / pop is
 // touched): the selector starts and interrupts its children exactly as it does for its own reasons. The point is the
@@ -124,6 +125,7 @@ namespace apmf::moveorder {
             std::atomic<std::uint32_t> shortEnds{ 0 }, shortStops{ 0 }, shortHolds{ 0 };
             std::atomic<float>         refDist{ 0.0f }, stopError{ 0.0f };
             std::atomic<std::uint64_t> holdUntilMs{ 0 };
+            std::atomic<std::uint64_t> fleeSeenMs{ 0 };   // the last uncarried pick that really saw isFleeing (0 = none)
         };
         struct Book {   // GAME THREAD only
             Snapshot      snap{};
@@ -259,6 +261,7 @@ namespace apmf::moveorder {
             a_r.refDist.store(0.0f, std::memory_order_relaxed);
             a_r.stopError.store(0.0f, std::memory_order_relaxed);
             a_r.holdUntilMs.store(0, std::memory_order_relaxed);
+            a_r.fleeSeenMs.store(0, std::memory_order_relaxed);
             a_r.seenSerial.store(a_serial, std::memory_order_release);
         }
 
@@ -319,7 +322,10 @@ namespace apmf::moveorder {
                 r.orig.fetch_add(1, std::memory_order_relaxed);
                 t_orig.fetch_add(1, std::memory_order_relaxed);
                 const auto* st   = who.ctl->state;
-                const Pick  none = Uncarried(passed != 0, carry == Carry::kOutranked, st && st->isFleeing, s.ranks != 0);
+                std::uint64_t seen = r.fleeSeenMs.load(std::memory_order_relaxed);
+                const bool  fleeing = FleeLatched(seen, st && st->isFleeing, now);
+                r.fleeSeenMs.store(seen, std::memory_order_relaxed);
+                const Pick  none = Uncarried(passed != 0, carry == Carry::kOutranked, fleeing, s.ranks != 0);
                 if (none == Pick::kDenyOnly) {
                     r.denyOnly.fetch_add(1, std::memory_order_relaxed);
                     t_denyOnly.fetch_add(1, std::memory_order_relaxed);

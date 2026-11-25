@@ -133,6 +133,21 @@ int main() {
         CHECK(Uncarried(true, false, true, true) == Pick::kOrig);      // flight / leaving water passes
         CHECK(Uncarried(false, true, true, true) == Pick::kOrig);      // a higher-priority area
     }
+    {   // The flee pops, the area comes back 1.0 s later, the selector asks every 0.25 s: refused all the way.
+        std::uint64_t seen = 0;
+        const auto    ask  = [&](bool a_isFleeing, std::uint64_t a_now) { return Uncarried(false, false, FleeLatched(seen, a_isFleeing, a_now), true); };
+        CHECK(ask(false, 500) == Pick::kOrig);    // never fled: nothing latched
+        CHECK(ask(true, 1000) == Pick::kDenyOnly);
+        for (std::uint64_t now = 1250; now <= 2250; now += 250) CHECK(ask(false, now) == Pick::kDenyOnly);
+        CHECK(ask(false, 2500) == Pick::kDenyOnly);
+        CHECK(ask(false, 2501) == Pick::kOrig);   // a latched answer never extends the latch
+        CHECK(ask(true, 3000) == Pick::kDenyOnly && seen == 3000);
+        CHECK(Uncarried(true, false, FleeLatched(seen, false, 3100), true) == Pick::kOrig);   // the gates stay
+        CHECK(Uncarried(false, true, FleeLatched(seen, false, 3100), true) == Pick::kOrig);
+        CHECK(Uncarried(false, false, FleeLatched(seen, false, 3100), false) == Pick::kOrig);
+        seen = 0;   // a new order (Reset)
+        CHECK(ask(false, 3200) == Pick::kOrig);
+    }
     {   // The reported phase once the engine stopped asking.
         CHECK(PhaseNow(kMovePhase_Standing, 0, 1000) == kMovePhase_Standing);
         CHECK(PhaseNow(kMovePhase_Standing, 0, 1001) == kMovePhase_NotCarried);
