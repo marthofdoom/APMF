@@ -4,6 +4,25 @@ Updated 2026-11-24 (ch.8b fire once branch `feat/cast-fire-once` first; 2026-11-
 shipped, what's probe-gated, what's next. Keep this current in the SAME change as any
 build/finding/workflow change.
 
+## HEAD OF WORK 2026-11-25 -- STRICT ORDER FIXES after deck-strict-1125, branch `fix/strict-1125` (from d01c2e3), NOT merged, NOT field run
+
+Spec `_agentlogs/harbinger/diag-strict-1125.md`. Agentlog `_agentlogs/harbinger/strict-fixes.md`. No ABI, header, hook or address change.
+1. `[hold]` watchdog: `core/HoldActivity.h` (host test `tools/hold_activity`), suspended while `moveorder::PhaseOf` is not None.
+2. `core/MoveSuppress.{h,cpp}` + `MoveSuppressLogic.h` (host test `tools/move_order`): new melee leaf attacks and ch.31 bash / power attack refused
+   while a strict order travels or returns. ch.31 answer: `kCombatMoveWhy_OffenseDenied` with `blocker` = the STRICT claim's handle.
+   NOT covered: an animation-extended chain (SCAR), its own RE step first (diag B3 iii).
+3. `WalkBack` (mean of finished returns), `combatapproach::HurryArea` (one period write per order, the 1.0 s carry gap), ch.25 heartbeat lines.
+4. Row equip admission for Ward and Bound Item (`core/RowEquipLogic.h`, host test `tools/row_equip`).
+Field check: `[move] ... attack REFUSED: he travels`, `may attack again (...)`, the `attacks while travelling` heartbeat (blocked / timeout counts low),
+no `NO PATH PROGRESS` under an order, `[t2a row equip] ... class=...Ward... ADMITTED` then a charge, PENDING to TRAVELLING under 0.8 s.
+**Summon interrupt (anim.summon_iaus, NOT touched).** It fails AFTER selection. Evidence a diagnosis needs, from one run with
+`[Probe] bRowVerdict=1` and the cast observer on: (a) for each failed try, the `[castobs] INTERRUPT-ATTRIB` line (who called InterruptCast,
+with the caller address) and the leaf entered in the 100 ms before it, (b) whether the hand's caster reached state Charging and for how long,
+(c) the 0x06 / 0x0A verdicts and the claim handle at that moment, (d) every `Attack` / `Bash` / `Block` leaf act of the actor between 0x06 YES
+and the interrupt, and the ch.15 / ch.8 deny lines of the same 100 ms, (e) the attack state and the magicka at the charge start, (f) the same for
+the gambit version that fires, side by side, (g) one run with ch.7 Offense denied for the claim's window: if it then fires, the attack act breaks
+the charge.
+
 ## HEAD OF WORK 2026-11-24b -- H-M1 P-A fix round, branch `feat/hm1-pa2` (from 71ef4c9), NOT merged, NOT field run
 Review S3-1 (already fleeing: `Pick::kDenyOnly`, ranked by S1), S3-2 (short stop: accept inside the leash, 1 s wait outside), SEV-4 F4 (stale phase),
 F5 (late silence is an error line too), F7 and the phase-change lines throttled, audit row 24. No header, ABI, hook-seat or address change. Host test

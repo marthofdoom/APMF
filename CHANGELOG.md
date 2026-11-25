@@ -1,3 +1,11 @@
+## Unreleased -- Strict order fixes after the first field run
+
+- **A follower on his way does not start a new melee attack.** While a strict order is travelling or returning, melee attacks from the game's combat AI and a mod's power attack or bash are refused. A swing already running finishes. Bows, crossbows and spells are not touched. He attacks again as soon as he stands. If he is blocked, or one walk takes 15 seconds, he may fight for a few seconds and then tries again.
+- **A long fight is no longer dropped as idle.** The engagement watchdog counted only the first attack of an unbroken string, so an archer who kept shooting, or a fighter in a long chain, read as doing nothing for 20 seconds. Draws, shots, chained swings and casts all count now. While a strict order stands the watchdog waits.
+- **A claimed ward or bound weapon reaches the hand.** The game's own opinion on when they are worth it no longer refuses the claimed spell. Fleeing, an effect already running, too little Magicka and the ward's own Magicka floor still do.
+- **A new order is carried sooner**, and the log's mean walk back counts finished returns only. Unchanged cast guard heartbeats write no line.
+- **Not field run yet.** No ABI change.
+
 ## Unreleased -- Strict movement order: stand on that spot (ABI v48)
 
 - **A mod can tell a fighter to stand on a point and he stands there.** With the new `kApproach_Strict` flag on a combat approach claim, Harbinger answers the game's own movement question for that fighter: go to the point, or stand. He keeps attacking, casting, shooting and blocking as in any fight. A lunge may carry him off the point, and he walks back at once. He does not flee or hide while the order stands.

@@ -707,10 +707,11 @@ namespace apmf::combatentry {
 // engaged, or not engaged."): the client may engage the same target again at once.
 //   * NO PATH PROGRESS (outside reach): over the last kNoProgressMs of world time the actor got no
 //     64u closer than it was at the window's start, did not keep pace with a moving target (the
-//     target moved >= 128u, the actor >= 64u, the gap grew by < 64u), and started no attack or cast
+//     target moved >= 128u, the actor >= 64u, the gap grew by < 64u), and started no attack or cast (core/HoldActivity.h)
 //     on the held target. Since marth 2026-10-27 this end counts as NOT ENGAGED: it takes the range
 //     rule's drop below (DropNotEngaged), so the actor's combat is ended (ranked, review R-1) and its
 //     prior behaviour restored, not only the claims released;
+//   * (both suspended while a strict ch.24 order is live on the actor)
 //   * ARRIVED BUT NOT FIGHTING (within kReachU): kArrivedIdleMs without an attack or cast on the
 //     held target -- a close but unreachable target, or a downed foe the engine will not strike;
 //   * NOT ENGAGED (ch.21 with param.fval > 0, the client's engage-on-sight range; marth 2026-10-12: "And
