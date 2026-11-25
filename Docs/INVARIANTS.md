@@ -1987,6 +1987,11 @@ The rule is the explicit form of #0/#1: #1 says "block the foreign input"; #18 a
   with the floor's answer) and logs `CheckCast ADMITTED ... on the instant caster` whenever
   the pre-amendment read would have refused. Enumeration: `Docs/DENY-COMPLETENESS-AUDIT.md`
   "Non-hand casters".
+- **A WEAPON HIT'S ENCHANTMENT IS NOT A CAST (2026-11-24, fix/ch8-enchant).** The on-hit road asks the weapon
+  hand's `CheckCast` with the weapon's enchantment, so ch.8 / ch.8b refused it on every hit. The gate passes a form
+  only when it is the enchantment the engine's own read (`InventoryEntryData::GetEnchantment`) gives for the weapon
+  in THAT hand and the weapon is not a staff. ch.25's cast guard is skipped on the same answer. Never a name or form list, never "formType 21": a staff casts through
+  the same slot with the same form type.
 - **A deny must honor the denied seat's OWN PROTOCOL — the act()/pop() pair
   lesson (feat/ai-cast-suppress, 2026-09-04, the recurring deck CTD).** Denying a
   behavior-tree node means making it FAIL the way the engine's own `ForceFail`

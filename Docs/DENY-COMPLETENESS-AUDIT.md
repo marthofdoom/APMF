@@ -313,6 +313,12 @@ context window (the built `CombatBehaviorContextMagic` DOES know its caster, but
 reading it at the node seat is an offset read this pass will not invent) or leaning
 on (a)/(b)'s per-hand narrowing alone.
 
+## Weapon enchantments on the hand casters (fix/ch8-enchant, 2026-11-24)
+
+Not a hole in the cast facet: the on-hit road is synchronous inside the hit, occupies no hand and charges nothing.
+The pass is exact (the form equals the enchantment of the weapon in that hand, non-staff), so no spell, scroll or staff
+enchantment can come through it.
+
 ## Non-hand casters (INVARIANTS #18 amendment, fix/apmf-cast-instant-caster, 2026-09-29)
 
 An actor owns four `ActorMagicCaster`s, one per `MagicSystem::CastingSource`: `kLeftHand`,

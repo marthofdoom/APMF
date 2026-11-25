@@ -14,6 +14,15 @@ status, `+24` the timeout, request flags, body), P3 on GAIT PROBE lines (aim hol
 0x18C58E8 / 0x167E1A8 / 0x1943E88, Melee 0x18C5948 / 0x167E228 / 0x1943EE8, Projectile 0x18C59A8 / 0x167E2A8 / 0x1943F48,
 Disable 0x18C5A08 / 0x167E328 / 0x1943FA8 (the line prints the class name too).
 
+## HEAD OF WORK 2026-11-24 -- ch.8: WEAPON ENCHANTMENTS PASS THE ALLOW-LIST, branch `fix/ch8-enchant`, NOT merged, NOT field run
+
+MFO plan `Docs/research/2026-11/tight-movement-plan.md` 7(a), package H-F. Field: Cicero, `CheckCast DENIED 'Fire Damage' hand=R
+(ch.8 select DENY)`, 0 enchant casts of 113 hits under an allow-list. Agentlog `_agentlogs/harbinger/hp-hf.md`.
+`core/CastGate.cpp` `IsWeaponOnHit`, `core/WeaponEnchant.h`, row `CastGate.GetEnchantment` (all three builds), host test
+`tools/weapon_enchant`. No ABI change. Field check (MFO `ench.on_hit`): `[t2c ench] ... PASSED` lines, no DENIED line for the
+weapon's enchantment, a staff off the list still denied. ch.25's line of fire guard (6 refusals of an
+enchantment in the same log) is skipped for the same form: one `onHit` read in `CheckCastThunk` serves both.
+
 ## HEAD OF WORK 2026-11-24 -- ch.8b: FIRE ONCE (ABI v47), branch `feat/cast-fire-once`, NOT merged, NOT field run
 
 MFO plan `Docs/research/2026-11/anim-residue-plan.md` package H-A (R1: Mystic Wind, Script + Restore, 47 unanimated lines).
