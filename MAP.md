@@ -2123,6 +2123,22 @@ ch.23), `channels/CombatApproach.cpp` (S1 decision, `AttributeYield`, the drift 
   Engine; hit-count noise) and APMF-B71 (no negative ModuleOf cache under the loader lock; `found=false`
   counted as unattributed; Papyrus/console StartCombat named Engine; ActionGate ClaimOutranksTree lacks try/catch).
 
+### `native/core/MoveOrder.{h,cpp}`, `core/MoveOrderLogic.h` — the STRICT MOVEMENT ORDER (ch.24 `kApproach_Strict`, ABI v48, H-M1 P-A, 2026-11-24)
+Spec MFO `Docs/research/2026-11/hm1-seat-brief.md`. Six `write_vfunc` seats, all or nothing: B1 / B2 on the selector vtable (0x02 / 0x04,
+`SelActThunk` / `SelUpdateThunk`: the thread-local pick bracket) and V0 / V2 / V3 / V4 on the Essential Down / Flee / Hide / Return links (0x0A,
+`ValueThunk<I>`). `IsMovementSelector` = structure, never vtable or name alone. `DecideNow` (actor's combat thread): slot -> Flight and
+Exit Water asked -> `combatapproach::CarryOf` -> `movelogic::Step` (pure, `tools/move_order`). Slot table: 64 seqlock slots written on the game
+thread by ch.24 (`Publish` from Poll, `Clear` from Apply / End / Release / Poll, `ResetAll`), runtime block written by the actor's combat thread.
+- **To add:** a mode = `Strict` / `Counts` in `MoveOrderLogic.h`. A child that passes = `kAskChildren`. A denied child = one `ValueThunk`
+  row (`kValueSeats` + `InstallValue`). A tunable = `MoveTuning`. Lifecycle = `Publish` / `Clear` callers in `channels/CombatApproach.cpp`.
+- **Depended on by:** `channels/CombatApproach.cpp` (Poll, Apply, End, Release, ResetAll, `StrictRefusal`), `core/ControlMap.cpp` (the sync refusal),
+  `core/ClientAPI.cpp` (two slots, `moveCaps`).
+- **What breaks:** installing AFTER `actiongate::Install` (its substrate list hooks the selector's 0x02, the byte guard then refuses);
+  answering travel on an area that does not carry the target (he paths to another centre); answering outside the bracket or for another
+  node (the Hide link vtable is shared with LowCombat); failing a movement child instead of answering its value (act / pop imbalance); writing
+  the slot table off the game thread; a lock in a seat. `cbt::ResolveController` (moved from ActionGate to `BehaviorTreeCatalog.h`, the one
+  reader for ActionGate, MoveProbe and this) may return its hypothesis A, which is not a CombatController: `WhoIs` rejects that.
+
 ### `native/core/MoveProbe.{h,cpp}` — `[Probe] bMoveProbe`: movement probes P1 / P2 / P3 (PASSIVE, 2026-11-24)
 MFO `Docs/research/2026-11/tight-movement-plan.md` section 9. Default OFF (installs nothing, `On()` / `Watching()` false). A
 record per live ch.24 claim, made by `Sample` (ch.24 `Poll`, game thread, live + in combat), closed by `Finish` (ch.24 `End`

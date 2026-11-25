@@ -227,6 +227,12 @@ ABI v19. "Get within this distance of that actor, and keep fighting." A mod name
 - **`bCombatApproach`** (default `1`). 0 = kIntent_CombatApproach claims are REFUSED (logged at startup with the reason).
 - **`bApproachGaitProbe`** (default `1` while testing, 2026-11-11). Passive probe, no deny, no write: while a ch.24 bound is carried and the actor moves, one `[ch.24] 0x<actor> GAIT PROBE (H3, passive)` line per second with its speed, the angle between its heading and its velocity (under 45 degrees a forward run, over 135 a backpedal, else a strafe) and the game's own movement bits (forward / back / left / right, walking / running / sprinting / sneaking), and one `SUMMARY` line when the claim ends. It answers whether the engine's Return To Combat Area movement runs facing forward. Position and heading reads on the game thread only.
 
+### [MoveOrder]
+
+ABI v48, the strict movement order of ch.24 (`kApproach_Strict`).
+
+- **`bStrictOrders`** (default `1`). 0 = nothing is installed and a claim with `kApproach_Strict` is REFUSED (the reason is logged and `CanServe` names it). Plain ch.24 claims are not affected.
+
 ### [CombatSubstrate]
 
 Facet reference: [Combat substrate](FACETS.md#combat-substrate-kintent_combatsubstrate).

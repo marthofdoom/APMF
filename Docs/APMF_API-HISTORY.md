@@ -411,6 +411,13 @@ takes a hit by the actor. Refused while a block hold stands (GuardHeld) or the w
 row. 1.6.1170 and 1.5.97. An older APMF refuses the value at the call: gate on abiVersion >= 44. No co-save.
 Docs/FACETS.md "Power attack".
 
+ABI v48 (2026-11-24, branch feat/hm1-pa): STRICT MOVEMENT ORDER (ch.24). `APMF_API_v48 : APMF_API_v38` with TWO slots
+(`SetMoveOrder`, `GetMoveOrderState`), `APMF_MoveOrder` and `APMF_MoveOrderInfo` (64 bytes each), `kApproach_Strict` = 1 << 2,
+`kApproachState_Unreachable` = 14, the enums MoveMode, MoveFlags, MovePhase, MoveOrderResult, MoveBlockWhy, MovePass, MoveCaps, and
+`APMF_ServeInfo::reserved` (+124) renamed `moveCaps` (an APMF under v48 writes 0). No size change. An APMF under v48 IGNORES the
+strict bit (a plain area claim): gate on `abiVersion >= 48` and `moveCaps & kMoveCaps_Strict`. The header is final for H-M1;
+the first build serves the implicit Stand order only (`SetMoveOrder` answers ModeNotServed).
+
 ABI v47 (2026-11-24, branch feat/cast-fire-once): FIRE ONCE. No slot, no struct change: kCastFlag_FireOnce = 1 << 17,
 kCastSeat_FireOnce = 1 << 18 in castSeats, kClaimEnd_Fired = 12. Section "ABI v47 fire once" below.
 
