@@ -18,6 +18,7 @@
 #include "core/HandBlock.h"
 #include "core/ActionGate.h"
 #include "core/AttackSelectProbe.h"
+#include "core/MoveOrder.h"            // ch.24 strict movement order (ABI v48): Install
 #include "core/MoveProbe.h"            // [Probe] bMoveProbe: Install
 #include "core/AttackSelect.h"         // ch.18 attack selection (ABI v34): Install, ResetAll
 #include "core/ProjectileAim.h"        // ch.29 projectile aim (ABI v36): Install, ResetAll
@@ -193,6 +194,12 @@ namespace {
             apmf::handblock::Install();          // hand-claim block (2026-10-06): 0x0F on the Melee/Ranged/
                                                   // Shield/Torch/OneHandedBlock item vtables. BEFORE aicastseats::Install, so
                                                   // each slot still holds the engine function it compares.
+            apmf::moveorder::Install();          // ch.24 STRICT ORDER (ABI v48): six write_vfunc seats on the movement
+                                                  // selector (0x02 / 0x04) and four of its child links (0x0A). BEFORE
+                                                  // actiongate::Install, which chains its own act() over the selector vtable:
+                                                  // each slot still holds the engine function it compares. [MoveOrder]
+                                                  // bStrictOrders (default 1). All or nothing; a refusal REFUSES
+                                                  // kApproach_Strict claims only.
             apmf::actiongate::Install();         // T1 combat-action allowance (ch.7; VR-refused inside)
             apmf::atkprobe::Install();           // [Probe] bAttackSelect (default 0): PASSIVE attack-selection probe,
                                                   // rides ch.7's act() thunk + 2 context-node seats (ClickUp 86e3bw775)

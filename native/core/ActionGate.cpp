@@ -714,64 +714,10 @@ namespace apmf::actiongate {
         std::atomic<std::uint32_t> g_popAnomalies{ 0 };
         std::atomic<bool>          g_popAnomalyLogged{ false };
 
-        // Resolve the deliberating actor from a node's `control` argument -- BOTH
-        // +0x158 hypotheses, exactly the guard T1Probe field-proved (see the
-        // deny path below for the full history). Shared by the deny path AND the
-        // PFP movement-probe path so the fragile offset logic exists in exactly
-        // one place. Declared BEFORE ActThunk (which calls it) -- this file has
-        // no header-declared helpers, so ordering inside the anonymous namespace
-        // is the only thing that makes it visible.
-        // ORDER AND TYPE (field crash 2026-10-30, LoreRim 1.6.1170): hypothesis B, the +0x20 hop to the real
-        // CombatController, is the engine's own read (every leaf: `mov rax,[thread+0x158]; mov rcx,[rax+0x20]`,
-        // Docs/BEHAVIOR-TREE-CATALOG.md) and the one field-proved on this runtime, so it is tried FIRST.
-        // Hypothesis A reads +0x28 of the CombatBehaviorController, which is not a CombatController, and is kept
-        // only as the fallback. The handle lookup (id 12204 / 12332) is untyped, so A once named a TREE
-        // reference: tried first, a non-actor there shadowed B and the deliberating actor was lost for that act.
-        // A hypothesis now counts only when it names an Actor (TESForm::formType +0x1A == ActorCharacter 0x3E,
-        // the engine's own test). For a real deliberating actor named by B the answer is unchanged.
-        bool IsActorRef(const RE::NiPointer<RE::Actor>& a_ref) {
-            return a_ref && a_ref->GetFormType() == RE::FormType::ActorCharacter;
-        }
-
-        RE::FormID ResolveDeliberatingActor(void* a_control) {
-            if (!a_control) return 0;
-            auto* tc      = reinterpret_cast<apmf::cbt::TreeControl*>(a_control);
-            void* p0x158 = tc->master_controller;
-            if (!p0x158) return 0;
-            void* cbcPlus20 = *reinterpret_cast<void**>(reinterpret_cast<std::uintptr_t>(p0x158) + 0x20);
-            if (cbcPlus20) {
-                auto* ctrlB = reinterpret_cast<apmf::cbt::ControllerMini*>(cbcPlus20);
-                if (auto b = ctrlB->attackerHandle.get(); IsActorRef(b)) return b->GetFormID();
-            }
-            auto* ctrlA = reinterpret_cast<apmf::cbt::ControllerMini*>(p0x158);
-            if (auto a = ctrlA->attackerHandle.get(); IsActorRef(a)) return a->GetFormID();
-            return 0;
-        }
-
-        // ch.23 PURSUIT LEASH: the same two +0x158 hypotheses as ResolveDeliberatingActor, in the
-        // same order (B first) with the same Actor test, but returning the controller that named the actor too -- the combat
-        // target is read from THAT controller (targetHandle, +0x2C), never from a guess.
-        apmf::cbt::ControllerMini* ResolveController(void* a_control, RE::NiPointer<RE::Actor>& a_actor) {
-            a_actor.reset();
-            if (!a_control) return nullptr;
-            auto* tc     = reinterpret_cast<apmf::cbt::TreeControl*>(a_control);
-            void* p0x158 = tc->master_controller;
-            if (!p0x158) return nullptr;
-            void* cbcPlus20 = *reinterpret_cast<void**>(reinterpret_cast<std::uintptr_t>(p0x158) + 0x20);
-            if (cbcPlus20) {
-                auto* ctrlB = reinterpret_cast<apmf::cbt::ControllerMini*>(cbcPlus20);
-                if (auto b = ctrlB->attackerHandle.get(); IsActorRef(b)) {
-                    a_actor = b;
-                    return ctrlB;
-                }
-            }
-            auto* ctrlA = reinterpret_cast<apmf::cbt::ControllerMini*>(p0x158);
-            if (auto a = ctrlA->attackerHandle.get(); IsActorRef(a)) {
-                a_actor = a;
-                return ctrlA;
-            }
-            return nullptr;
-        }
+        // The resolvers live in core/BehaviorTreeCatalog.h (one shared reader: here, core/MoveProbe, core/MoveOrder).
+        using apmf::cbt::IsActorRef;
+        using apmf::cbt::ResolveController;
+        using apmf::cbt::ResolveDeliberatingActor;
 
         // ---- SUBSTRATE UNRESOLVED-ACT PROBE (fix/apmf-gate-probe-proxy-name, 2026-10-26; principle 5, PASSIVE) ----
         // Field 2026-10-26d: a substrate window closed `tree-outside-gate` with "Combat Parallel entered 0" and

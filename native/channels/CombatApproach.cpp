@@ -1,4 +1,5 @@
 #include "PCH.h"
+#include "core/MoveOrder.h"   // ABI v48 strict movement order
 #include "core/MoveProbe.h"   // [Probe] bMoveProbe (OBSERVE ONLY)
 #include "core/CombatOps.h"   // #4a: no read through a controller a queued Harbinger StopCombat may free
 #include "core/Sources.h"   // Harbinger 1a: seat census
@@ -273,6 +274,7 @@ namespace {
         RE::FormID       target   = 0;
         float            radius   = 0.0f;
         std::uint32_t    flags    = 0;
+        std::uint32_t    moveGen  = 0;       // ABI v48: the strict order's sequence (0 = not strict)
         // ABI v39 (kApproach_Point): the declared centre, and the actor's cell space as of the first sweep after the
         // claim applied (nullptr until then). The point means nothing in any other space.
         RE::NiPoint3     point{};
@@ -475,6 +477,7 @@ namespace {
         case APMF_API::kApproachState_ActorGone:     return "ACTOR GONE";
         case APMF_API::kApproachState_Released:      return "RELEASED";
         case APMF_API::kApproachState_Refused:       return "REFUSED (invalid re-point)";
+        case APMF_API::kApproachState_Unreachable:   return "UNREACHABLE (strict order)";
         default:                                     return "?";
         }
     }
@@ -836,6 +839,7 @@ namespace {
                                    static_cast<double>(e.gaitSpeedSum) / n, e.gaitSpeedMax);
         }
         if (!gait.empty()) spdlog::info("{}", gait);
+        apmf::moveorder::Clear(a_id, a_why, WorldNow());   // ABI v48: the seats answer the engine's own again
         apmf::moveprobe::Finish(a_id, a_why);   // [Probe] bMoveProbe P1 summary
         g_ended.fetch_add(1, std::memory_order_relaxed);
         MarkReactivate(a_id);   // F3: S3 puts the engine's area back on the actor's own combat thread
@@ -852,6 +856,7 @@ namespace {
 
     void Apply(RE::FormID a_id, const APMF_API::APMF_Param& a_param, const char* a_what) {
         const std::uint64_t now = apmf::clock::MonotonicMs();
+        apmf::moveorder::Clear(a_id, a_what, WorldNow());   // the previous declaration's order, if any
         {
             std::unique_lock lk(g_entryMx);
             auto& slot = g_entries[a_id];
@@ -861,6 +866,7 @@ namespace {
             e.target     = a_param.target;
             e.radius     = a_param.fval;
             e.flags      = static_cast<std::uint32_t>(a_param.ival);
+            e.moveGen    = (e.flags & APMF_API::kApproach_Strict) != 0 ? apmf::moveorder::NextGen() : 0;
             e.point      = RE::NiPoint3{ a_param.posX, a_param.posY, a_param.posZ };
             e.pointSpace = nullptr;   // bound at the first sweep (a re-point binds again)
             e.owner      = APMF_API::kInvalidHandle;
@@ -893,7 +899,9 @@ namespace {
         spdlog::info("[ch.24] 0x{} combat-approach claim {}: close to within {:.0f} of {}{}. The actor's own combat "
                      "area carries the bound while it fights; nothing else is claimed.",
                      Hex(a_id), a_what, a_param.fval, goal,
-                     (static_cast<std::uint32_t>(a_param.ival) & APMF_API::kApproach_Hold) != 0 ? " (HOLD after arrival)"
+                     (static_cast<std::uint32_t>(a_param.ival) & APMF_API::kApproach_Strict) != 0
+                         ? " (STRICT ORDER: the engine's movement choice is answered, go there and stand)"
+                     : (static_cast<std::uint32_t>(a_param.ival) & APMF_API::kApproach_Hold) != 0 ? " (HOLD after arrival)"
                                                                                                 : " (ends on arrival)");
     }
 
@@ -914,6 +922,7 @@ namespace {
         // Relinquish (INVARIANTS #5a): the seats stop carrying the bound; the next area update
         // (<= 0.25 s) puts the engine's own geometry back first and recomputes from it.
         void Release(RE::FormID id, RE::Actor* /*actor*/) override {
+            apmf::moveorder::Clear(id, "released", WorldNow());
             apmf::moveprobe::Finish(id, "released");   // [Probe] bMoveProbe P1 summary
             std::uint32_t applied = 0;
             bool          had = false, ended = false;
@@ -1158,6 +1167,7 @@ namespace apmf::combatapproach {
             float         radius = 0.0f;
             std::uint32_t flags  = 0;
             bool          wasApplied = false;
+            std::uint32_t moveGen = 0;
             RE::NiPoint3  point{};
             const void*   pointSpace = nullptr;
             {
@@ -1180,6 +1190,7 @@ namespace apmf::combatapproach {
                 radius     = e.radius;
                 flags      = e.flags;
                 wasApplied = e.wasApplied;
+                moveGen    = e.moveGen;
                 point      = e.point;
                 pointSpace = e.pointSpace;
             }
@@ -1194,6 +1205,13 @@ namespace apmf::combatapproach {
                             : "invalid declaration (a Repoint named target 0 / the actor itself, or a radius that is not a "
                               "positive finite number):");
                 continue;
+            }
+            if (moveGen != 0) {   // a Repoint is not checked at the call; a substrate taken later is its own state below
+                std::uint32_t code = 0;
+                if (const char* bad = StrictRefusal(id, flags, radius, code)) {
+                    End(id, APMF_API::kApproachState_Refused, bad);
+                    continue;
+                }
             }
             auto* actor = RE::TESForm::LookupByID<RE::Actor>(id);
             if (!actor || actor->IsDead() || !actor->Is3DLoaded()) {
@@ -1274,6 +1292,7 @@ namespace apmf::combatapproach {
             // Review P3: the graph read is an engine call, made here, never under g_entryMx (the combat-thread
             // seats take that lock shared).
             const bool    animDriven = actor->IsAnimationDriven();
+            const std::uint32_t movePhase = moveGen != 0 ? apmf::moveorder::PhaseOf(id) : 0;
             {
                 std::unique_lock lk(g_entryMx);
                 const auto it = g_entries.find(id);
@@ -1308,6 +1327,13 @@ namespace apmf::combatapproach {
                         }
                     } else {
                         next = APMF_API::kApproachState_Approaching;
+                    }
+                    // ABI v48: the order's own phase names the state (the engine's area verdict does not decide it).
+                    if (next == APMF_API::kApproachState_Holding || next == APMF_API::kApproachState_Approaching) {
+                        if (movePhase == APMF_API::kMovePhase_Standing) next = APMF_API::kApproachState_Holding;
+                        else if (movePhase == APMF_API::kMovePhase_Travelling || movePhase == APMF_API::kMovePhase_Returning ||
+                                 movePhase == APMF_API::kMovePhase_Blocked)
+                            next = APMF_API::kApproachState_Approaching;
                     }
                     // Principle 7: a bound the engine stopped carrying is a FAILURE, said out loud.
                     const std::uint64_t seen  = e.lastSeenMs.load(std::memory_order_relaxed);
@@ -1348,6 +1374,25 @@ namespace apmf::combatapproach {
                         e.lastLineMs = now;
                         logLine      = true;
                     }
+                }
+            }
+            if (moveGen != 0 && !endWhy) {   // ABI v48: the slot is live exactly while the entry is
+                if (live) {
+                    apmf::movelogic::Snapshot s;
+                    s.fid       = id;
+                    s.owner     = h;
+                    s.mode      = APMF_API::kMove_Stand;   // the implicit order (P-A)
+                    s.leashR    = radius;
+                    s.arriveR   = apmf::movelogic::MoveTuning::kDefaultArriveR;
+                    s.gen       = moveGen;
+                    s.points[0] = { posX.x, posX.y, posX.z };
+                    if (!apmf::moveorder::Publish(s, wnow)) {
+                        End(id, APMF_API::kApproachState_Refused, "64 strict movement orders are live (no slot):");
+                        continue;
+                    }
+                    apmf::moveorder::PollLines(id, wnow);
+                } else {
+                    apmf::moveorder::Clear(id, inCombat ? "the claim is leashed" : "not in combat", wnow);
                 }
             }
             // [Probe] bMoveProbe P1 (OBSERVE ONLY): from the first sweep the claim is live, before the engine carries it too.
@@ -1409,6 +1454,7 @@ namespace apmf::combatapproach {
                      g_s1Disabled.load(), g_s1Stood.load(), g_s1Drift.load(), g_s2Vanilla.load(), g_s3Brackets.load(), g_s4Brackets.load(),
                      g_s5Brackets.load(), g_s5FindBrackets.load(), g_s6Verdicts.load(), g_s6Outside.load(), g_ended.load(), g_s3PutBack.load(),
                      g_touchedCount.load());
+        apmf::moveorder::HeartbeatLine();
     }
 
     void RestoreBeforeSave() {
@@ -1454,6 +1500,7 @@ namespace apmf::combatapproach {
 
     void ResetAll(const char* why) {
         apmf::moveprobe::Reset(why);
+        apmf::moveorder::ResetAll(why);
         std::size_t n = 0, a = 0;
         {
             std::unique_lock lk(g_entryMx);
@@ -1509,6 +1556,45 @@ namespace apmf::combatapproach {
             out->size = callerSize;
         }
         return state;
+    }
+
+    std::uint64_t WorldMs() { return WorldNow(); }
+
+    Carry CarryOf(RE::CombatController* a_ctl, const float* a_pos, float a_radius) {
+        void* const cur = a_ctl ? static_cast<void*>(a_ctl->GetRuntimeData().currentArea) : nullptr;
+        if (!cur) return Carry::kNot;
+        if (*reinterpret_cast<const std::uintptr_t*>(cur) != g_vtStd)
+            return At<std::int32_t>(cur, kAreaPriority) > 1 ? Carry::kOutranked : Carry::kNot;   // the standard area's is 1
+        if (At<std::uint8_t>(cur, kAreaActive) == 0 || At<std::uint8_t>(cur, kAreaEnabled) == 0) return Carry::kNot;
+        const Geo g = ReadGeo(cur);
+        const float have[4] = { g.x, g.y, g.z, g.radius }, want[4] = { a_pos[0], a_pos[1], a_pos[2], a_radius };
+        return std::memcmp(have, want, sizeof(have)) == 0 ? Carry::kCarried : Carry::kNot;
+    }
+
+    bool FindClaim(APMF_API::Handle a_h, std::uint32_t& a_flags, float& a_radius) {
+        if (a_h == APMF_API::kInvalidHandle) return false;
+        std::shared_lock lk(g_entryMx);
+        for (const auto& [id, e] : g_entries)
+            if (e->owner == a_h && !e->released && !e->ending) {
+                a_flags  = e->flags;
+                a_radius = e->radius;
+                return true;
+            }
+        return false;
+    }
+
+    const char* StrictRefusal(RE::FormID a_actor, std::uint32_t a_flags, float a_radius, std::uint32_t& a_code) {
+        constexpr std::uint32_t need = APMF_API::kApproach_Point | APMF_API::kApproach_Hold;
+        a_code = APMF_API::kServeRefusal_BadRequest;
+        if ((a_flags & need) != need) return "kApproach_Strict without kApproach_Point | kApproach_Hold";
+        if (!apmf::moveorder::Served()) {
+            a_code = APMF_API::kServeRefusal_NotInstalled;
+            return apmf::moveorder::NotServedReason();
+        }
+        if (!apmf::movelogic::RadiiOk(a_radius, apmf::movelogic::MoveTuning::kDefaultArriveR))
+            return "kApproach_Strict with param.fval below 24 (the default arrival radius)";
+        if (!apmf::moveorder::HasRoom(a_actor)) return "64 strict movement orders are live (no slot)";
+        return nullptr;
     }
 
     const void* SpaceOfRef(const RE::TESObjectREFR* a_ref) { return SpaceOf(a_ref); }
