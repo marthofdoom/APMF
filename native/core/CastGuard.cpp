@@ -4,6 +4,7 @@
 #include "core/CastGuard.h"
 #include "core/ControlMap.h"
 #include "core/Registry.h"
+#include "core/SelfBlast.h"
 #include "core/Sightline.h"
 #include "core/Sources.h"
 #include "core/CastGate.h"
@@ -90,6 +91,10 @@ namespace apmf::castguard {
         std::atomic<bool>        g_anyGuard{ false };
         std::atomic<const char*> g_notArmedReason{ "before kDataLoaded (the measurement arms there)" };
 
+        // The bits that need Pump's measurement (and so the armed hostility row).
+        constexpr std::uint32_t kMeasuredBits = APMF_API::kCastGuard_LineOfFire | APMF_API::kCastGuard_Bystanders |
+                                                APMF_API::kCastGuard_SelfBlastParty;
+
         // ---- the published measurement: one SEQLOCK slot per guarded caster ---------------
         // Writer: the main thread only (Pump / ResetAll). Readers: any thread, lock-free (the
         // cast seats). Payload: {key = caster, aim}, {line friend, blast friend}, {line flag,
@@ -109,6 +114,9 @@ namespace apmf::castguard {
             std::atomic<std::uint64_t> selfArea{ 0 };      // (selfFriend << 32) | bits(selfDist)
             std::atomic<std::uint64_t> weapon{ 0 };        // (weaponAim << 32) | weaponLine
             std::atomic<std::uint32_t> meleeFriend{ 0 };
+            // kCastGuard_SelfBlastParty: (id << 32) | bits(distance). partyAny's and partyOpen's meaning: selfblast::Reading.
+            std::atomic<std::uint64_t> partyAny{ 0 };
+            std::atomic<std::uint64_t> partyOpen{ 0 };
         };
         Slot g_slots[kSlots];
 
@@ -127,6 +135,7 @@ namespace apmf::castguard {
             RE::FormID    weaponLine  = 0;       // a bystander within kLinePad of the line to weaponAim
             RE::FormID    meleeFriend = 0;       // a bystander inside the melee swing arc toward weaponAim
             bool          targetNear  = false;   // weaponAim is within kMeleeMaxReach (AttackFromCover's melee test)
+            selfblast::Reading party;             // kCastGuard_SelfBlastParty (its measuredMs / found mirror the slot's)
         };
 
         constexpr RE::FormID KeyCaster(std::uint64_t k) { return static_cast<RE::FormID>(k >> 32); }
@@ -146,7 +155,9 @@ namespace apmf::castguard {
             s.key.store((static_cast<std::uint64_t>(a_caster) << 32) | a_l.aim, std::memory_order_relaxed);
             s.friends.store((static_cast<std::uint64_t>(a_l.lineFriend) << 32) | a_l.blastFriend,
                             std::memory_order_relaxed);
-            s.word.store((static_cast<std::uint64_t>((a_l.lineBlocked ? 1u : 0u) | (a_l.targetNear ? 2u : 0u)) << 32) |
+            s.word.store((static_cast<std::uint64_t>((a_l.lineBlocked ? 1u : 0u) | (a_l.targetNear ? 2u : 0u) |
+                                                     (a_l.party.party ? 4u : 0u) | (a_l.party.summons ? 8u : 0u))
+                          << 32) |
                              std::bit_cast<std::uint32_t>(a_l.blastDist),
                          std::memory_order_relaxed);
             s.measuredMs.store(a_l.measuredMs, std::memory_order_relaxed);
@@ -156,6 +167,12 @@ namespace apmf::castguard {
             s.weapon.store((static_cast<std::uint64_t>(a_l.weaponAim) << 32) | a_l.weaponLine,
                            std::memory_order_relaxed);
             s.meleeFriend.store(a_l.meleeFriend, std::memory_order_relaxed);
+            s.partyAny.store((static_cast<std::uint64_t>(a_l.party.anyId) << 32) |
+                                 std::bit_cast<std::uint32_t>(a_l.party.anyDist),
+                             std::memory_order_relaxed);
+            s.partyOpen.store((static_cast<std::uint64_t>(a_l.party.openId) << 32) |
+                                  std::bit_cast<std::uint32_t>(a_l.party.openDist),
+                              std::memory_order_relaxed);
             s.seq.store(q + 2, std::memory_order_release);
         }
 
@@ -184,6 +201,8 @@ namespace apmf::castguard {
                     const std::uint64_t sm = s.selfArea.load(std::memory_order_relaxed);
                     const std::uint64_t wp = s.weapon.load(std::memory_order_relaxed);
                     const std::uint32_t mf = s.meleeFriend.load(std::memory_order_relaxed);
+                    const std::uint64_t pa = s.partyAny.load(std::memory_order_relaxed);
+                    const std::uint64_t po = s.partyOpen.load(std::memory_order_relaxed);
                     std::atomic_thread_fence(std::memory_order_acquire);
                     if (s.seq.load(std::memory_order_relaxed) != s1) continue;
                     if (KeyCaster(k) != a_caster) break;   // a different caster: next probe slot
@@ -200,6 +219,14 @@ namespace apmf::castguard {
                     l.weaponAim   = static_cast<RE::FormID>(wp >> 32);
                     l.weaponLine  = static_cast<RE::FormID>(wp & 0xFFFFFFFFu);
                     l.meleeFriend = mf;
+                    l.party.found      = true;
+                    l.party.party      = ((w >> 32) & 4u) != 0;
+                    l.party.summons    = ((w >> 32) & 8u) != 0;
+                    l.party.measuredMs = m;
+                    l.party.anyId      = static_cast<RE::FormID>(pa >> 32);
+                    l.party.anyDist    = std::bit_cast<float>(static_cast<std::uint32_t>(pa & 0xFFFFFFFFu));
+                    l.party.openId     = static_cast<RE::FormID>(po >> 32);
+                    l.party.openDist   = std::bit_cast<float>(static_cast<std::uint32_t>(po & 0xFFFFFFFFu));
                     return l;
                 }
             }
@@ -222,7 +249,8 @@ namespace apmf::castguard {
         // ---- counters (relaxed; heartbeat on the main thread) ----
         std::atomic<std::uint64_t> g_measures{ 0 }, g_noAim{ 0 }, g_lineHits{ 0 }, g_blastNear{ 0 },
             g_lofRefused{ 0 }, g_chanRefused{ 0 }, g_startHeld{ 0 }, g_startUnknown{ 0 }, g_stood{ 0 },
-            g_tableFull{ 0 }, g_weaponHeld{ 0 }, g_selfRefused{ 0 }, g_weaponUnknown{ 0 };
+            g_tableFull{ 0 }, g_weaponHeld{ 0 }, g_selfRefused{ 0 }, g_weaponUnknown{ 0 },
+            g_partyHeld{ 0 }, g_partyRefused{ 0 }, g_partyUnknown{ 0 }, g_partyWalls{ 0 };
         std::uint64_t g_lastHeartbeatMs = 0;   // main thread
         constexpr std::uint64_t kHeartbeatMs = 30000;
 
@@ -313,21 +341,27 @@ namespace apmf::castguard {
             return !a_other->IsHostileToActor(a_caster);
         }
 
+        // A creature the PLAYER owns (a bought horse: its reference's ExtraOwnership names the player's
+        // base NPC, 0x7, as SetActorOwner(PlayerRef.GetActorBase()) writes it). TESObjectREFR::extraList +
+        // GetByType (an inline walk under the list's read lock).
+        bool OwnedByPlayer(RE::Actor* a_other) {
+            const auto* own = a_other->extraList.GetByType<RE::ExtraOwnership>();
+            return own && own->owner && own->owner->GetFormID() == 0x7;
+        }
+        // Commanded by the caster, the player or a teammate (a party summon or thrall).
+        bool CommandedByParty(RE::Actor* a_caster, RE::Actor* a_other, RE::PlayerCharacter* a_player) {
+            const auto  cmdp = a_other->GetCommandingActor();
+            const auto* cmd  = cmdp.get();
+            return cmd && (cmd == a_caster || cmd == a_player || cmd->IsPlayerTeammate());
+        }
+
         // kCastGuard_Bystanders (marth 2026-11-02 "Bystanders only"): a BYSTANDER of the caster is an actor
         // hitting whom is a crime: not the player, not a player teammate, not commanded by the caster, the
         // player or a teammate (a party summon or thrall: AIProcess middleHigh commandingActor, a field read,
         // as channels/CombatEntry.cpp ActivelyHostile reads it), and not hostile to the caster.
         bool Bystander(RE::Actor* a_caster, RE::Actor* a_other, RE::PlayerCharacter* a_player) {
             if (a_other == a_player || a_other->IsPlayerTeammate()) return false;
-            // A creature the PLAYER owns (a bought horse: its reference's ExtraOwnership names the player's
-            // base NPC, 0x7, as SetActorOwner(PlayerRef.GetActorBase()) writes it) is the party's, not a
-            // bystander. TESObjectREFR::extraList + GetByType (an inline walk under the list's read lock).
-            if (const auto* own = a_other->extraList.GetByType<RE::ExtraOwnership>();
-                own && own->owner && own->owner->GetFormID() == 0x7)
-                return false;
-            const auto  cmdp = a_other->GetCommandingActor();
-            const auto* cmd  = cmdp.get();
-            if (cmd && (cmd == a_caster || cmd == a_player || cmd->IsPlayerTeammate())) return false;
+            if (OwnedByPlayer(a_other) || CommandedByParty(a_caster, a_other, a_player)) return false;
             return !a_other->IsHostileToActor(a_caster);
         }
 
@@ -335,6 +369,9 @@ namespace apmf::castguard {
         // an area up to ~188 ft (Fire Storm's 100 ft = 2133u fits; a larger area is compared against
         // the nearest friendly inside 4096u). The hostility test runs only for actors this close.
         constexpr float kBlastConsider = 4096.0f;
+        // kCastGuard_SelfBlastParty: at most this many members of one caster's measurement are tested for a wall
+        // (3 rays each), in list order; the rest count as in the open.
+        constexpr int   kMaxWallTests = 8;
 
         // MAIN thread: measure one caster and publish. a_flags = the winning guard claim's bits. The
         // LineOfFire part (friends, the spell aim) is measured exactly as before kCastGuard_Bystanders
@@ -347,6 +384,24 @@ namespace apmf::castguard {
             if (!caster || !caster->Is3DLoaded() || !caster->GetParentCell()) return;   // stays unknown
             const bool lof = (a_flags & APMF_API::kCastGuard_LineOfFire) != 0;
             const bool bys = (a_flags & APMF_API::kCastGuard_Bystanders) != 0;
+            const bool pty = (a_flags & APMF_API::kCastGuard_SelfBlastParty) != 0;
+            const bool sum = pty && (a_flags & APMF_API::kCastGuard_SelfBlastSummons) != 0;
+            l.party.party   = pty;
+            l.party.summons = sum;
+            // The reach inside which a wall is looked for: the widest Self blast a live driving cast claim names
+            // (either hand). 0 = none claimed: no ray is cast and everybody counts.
+            float rayReach = 0.0f;
+            if (pty)
+                for (const CastHand hand : { CastHand::kLeft, CastHand::kRight }) {
+                    apmf::CastSeatClaim bc{};
+                    if (!ControlMap::Get().TryGetCastSeatClaimForHand(a_fid, hand, bc) ||
+                        (bc.flags & APMF_API::kCastFlag_DenyHandOnly) != 0)
+                        continue;
+                    const auto b = selfblast::BlastOfItem(
+                        RE::TESForm::LookupByID<RE::MagicItem>(bc.proxy ? bc.proxy : bc.spell), true);
+                    if (b.radius > 0.0f && !b.throughWalls) rayReach = std::max(rayReach, b.radius + selfblast::kPartyPad);
+                }
+            int walls = kMaxWallTests;
 
             // The spell aim: the target of the live driving cast claim when that claim's spell is itself
             // OFFENSIVE (the seats aim it there), else the combat target the AI's own casts aim at. A
@@ -423,6 +478,18 @@ namespace apmf::castguard {
                             l.blastDist   = blast;
                             l.blastFriend = a->GetFormID();
                         }
+                    }
+                }
+
+                // kCastGuard_SelfBlastParty: the player and the party, around the caster.
+                if (pty) {
+                    const bool mate = a == player || a->IsPlayerTeammate();
+                    if (mate || (sum && selfblast::CountsAsParty(false, false, CommandedByParty(caster, a, player),
+                                                                 OwnedByPlayer(a), true))) {
+                        const float d         = p.GetDistance(cpos);
+                        const bool  sheltered = d <= rayReach && walls-- > 0 && selfblast::WallBetween(caster, a);
+                        if (sheltered) g_partyWalls.fetch_add(1, std::memory_order_relaxed);
+                        selfblast::Fold(l.party, a->GetFormID(), d, sheltered);
                     }
                 }
 
@@ -524,7 +591,7 @@ namespace apmf::castguard {
         }
 
         enum Reason : std::uint32_t { kReasonLine = 1, kReasonBlast = 2, kReasonUnknown = 3, kReasonChannel = 4,
-                                      kReasonSelf = 5, kReasonMelee = 6 };
+                                      kReasonSelf = 5, kReasonMelee = 6, kReasonParty = 7, kReasonPartyUnknown = 8 };
 
         std::string SelfDetail(const Lof& l, float a_area, std::uint64_t a_now) {
             return fmt::format("bystander 0x{} is {:.0f}u from the caster, inside the Self area {:.0f} + {:.0f}u "
@@ -532,10 +599,38 @@ namespace apmf::castguard {
                                Hex(l.selfFriend), l.selfDist, a_area, kBlastPad, a_now - l.measuredMs);
         }
 
+        // kCastGuard_SelfBlastParty at a seat: true = the hold stands (counted, logged rate limited).
+        bool HoldsParty(APMF_API::Handle a_h, std::uint32_t a_flags, RE::FormID a_fid, RE::Actor* a_who,
+                        RE::MagicItem* a_spell, const char* a_seat, bool a_dual) {
+            if ((a_flags & APMF_API::kCastGuard_SelfBlastParty) == 0) return false;
+            const auto blast = selfblast::BlastOfItem(a_spell, a_dual);
+            if (blast.radius <= 0.0f) return false;
+            const auto now = apmf::clock::MonotonicMs();
+            const auto r   = Read(a_fid).party;
+            const bool sum = (a_flags & APMF_API::kCastGuard_SelfBlastSummons) != 0;
+            const auto ans = selfblast::Judge(blast, r, sum, now, kFreshMs);
+            if (ans == selfblast::Answer::kClear) return false;
+            const bool unknown = ans == selfblast::Answer::kUnknown;
+            const bool any     = blast.throughWalls;
+            if (!Decide(a_h, a_fid, a_who, a_spell, a_seat, "self blast, party", unknown ? kReasonPartyUnknown : kReasonParty,
+                        unknown ? std::string("the party is not measured yet, or older than 250 ms -- held, never clear by "
+                                              "fallback")
+                                : fmt::format("party member 0x{} is {:.0f}u from the caster, inside the blast {:.0f} + {:.0f}u{} "
+                                              "(measured {} ms ago)",
+                                              Hex(any ? r.anyId : r.openId), any ? r.anyDist : r.openDist, blast.radius,
+                                              selfblast::kPartyPad, any ? ", which walls do not stop" : "",
+                                              now - r.measuredMs)))
+                return false;
+            if (unknown) g_partyUnknown.fetch_add(1, std::memory_order_relaxed);
+            return true;
+        }
+
     }
 
     void Install() {
         if (g_armed.load(std::memory_order_relaxed)) return;
+        if (const char* why = selfblast::Install())
+            spdlog::warn("[ch.25] self blast party hold NOT armed -- {}. kCastGuard_SelfBlastParty claims are REFUSED.", why);
         if (REL::Module::IsVR()) {
             g_notArmedReason.store("VR runtime (the hostility call is verified on 1.6.1170, 1.5.97 and 1.7.104 only)");
         } else if (!allowance::RuntimeSupported()) {
@@ -568,13 +663,16 @@ namespace apmf::castguard {
         if (!a_param) return "no param -- kIntent_CastGuard REQUIRES param.ival = CastGuardFlags (RequestEx)";
         const auto bits = static_cast<std::uint32_t>(a_param->ival);
         if ((bits & ~APMF_API::kCastGuard_All) != 0)
-            return "param.ival carries a bit this APMF does not know (kCastGuard_All is 0xF at ABI v32)";
+            return "param.ival carries a bit this APMF does not know (kCastGuard_All is 0x3F)";
         if ((bits & APMF_API::kCastGuard_All) == 0) return "param.ival names no guard (no CastGuardFlags bit set)";
         if (!std::isfinite(a_param->fval) || a_param->fval < 0.0f)
             return "param.fval (the TTL in seconds) is negative or not a finite number (0 = the cast default)";
         if (a_actor == 0x14) return "the actor is the player (the guard gates an NPC's own AI casts)";
-        if ((bits & (APMF_API::kCastGuard_LineOfFire | APMF_API::kCastGuard_Bystanders)) != 0 && !LineOfFireArmed())
-            return NotArmedReason();
+        if ((bits & APMF_API::kCastGuard_SelfBlastSummons) != 0 && (bits & APMF_API::kCastGuard_SelfBlastParty) == 0)
+            return "kCastGuard_SelfBlastSummons without kCastGuard_SelfBlastParty (it only widens that hold)";
+        if ((bits & kMeasuredBits) != 0 && !LineOfFireArmed()) return NotArmedReason();
+        if ((bits & APMF_API::kCastGuard_SelfBlastParty) != 0)
+            if (const char* why = selfblast::NotArmedReason()) return why;
         return nullptr;
     }
 
@@ -597,7 +695,7 @@ namespace apmf::castguard {
         // the slot would also leak).
         g_live.clear();
         for (const auto& [fid, flags] : g_guards)
-            if (flags & (APMF_API::kCastGuard_LineOfFire | APMF_API::kCastGuard_Bystanders))
+            if (flags & kMeasuredBits)
                 g_live.emplace_back(fid, flags);
         for (auto& s : g_slots) {
             const auto k = s.key.load(std::memory_order_relaxed);
@@ -623,16 +721,19 @@ namespace apmf::castguard {
             if (!g_live.empty() || g_lofRefused.load(std::memory_order_relaxed) ||
                 g_chanRefused.load(std::memory_order_relaxed) || g_startHeld.load(std::memory_order_relaxed) ||
                 g_weaponHeld.load(std::memory_order_relaxed) || g_selfRefused.load(std::memory_order_relaxed) ||
-                g_weaponUnknown.load(std::memory_order_relaxed))
+                g_weaponUnknown.load(std::memory_order_relaxed) || g_partyHeld.load(std::memory_order_relaxed) ||
+                g_partyRefused.load(std::memory_order_relaxed))
                 spdlog::info("[ch.25] HEARTBEAT {} line-of-fire caster(s): {} measure(s) ({} no aim, {} friendly on a "
                              "line, {} friendly near an aim); 0x0A refused {} (line of fire) + {} (channel bound); "
                              "0x06 held {} ({} not measured); {} stood (Engine outranked the guard); table full {}; "
                              "bystanders: 0x0A refused {} (Self area), {} weapon attack(s) held, {} weapon attack(s) "
-                             "allowed, reading unknown.",
+                             "allowed, reading unknown; self blast party: 0x06 held {}, 0x0A refused {} ({} of both not measured), {} "
+                             "member measure(s) behind a wall.",
                              g_live.size(), g_measures.load(), g_noAim.load(), g_lineHits.load(), g_blastNear.load(),
                              g_lofRefused.load(), g_chanRefused.load(), g_startHeld.load(), g_startUnknown.load(),
                              g_stood.load(), g_tableFull.load(), g_selfRefused.load(), g_weaponHeld.load(),
-                             g_weaponUnknown.load());
+                             g_weaponUnknown.load(), g_partyHeld.load(), g_partyRefused.load(), g_partyUnknown.load(),
+                             g_partyWalls.load());
         }
     }
 
@@ -644,7 +745,8 @@ namespace apmf::castguard {
         spdlog::info("[ch.25] cast guard measurements reset ({}).", a_why ? a_why : "?");
     }
 
-    bool DenyCheckCast(RE::Actor* a_actor, RE::FormID a_fid, RE::MagicItem* a_spell, allowance::Hand a_hand) {
+    bool DenyCheckCast(RE::Actor* a_actor, RE::FormID a_fid, RE::MagicItem* a_spell, allowance::Hand a_hand,
+                       bool a_dual) {
         if (!g_anyGuard.load(std::memory_order_relaxed) || !a_spell || a_hand == allowance::Hand::kUnknown) return false;
         std::uint32_t    flags = 0;
         APMF_API::Handle h     = APMF_API::kInvalidHandle;
@@ -703,6 +805,12 @@ namespace apmf::castguard {
                 }
             }
         }
+
+        // SELF BLAST, PARTY (opt-in): refused unless a fresh reading says clear. Never clear by fallback.
+        if (HoldsParty(h, flags, a_fid, a_actor, a_spell, "CheckCast (0x0A)", a_dual)) {
+            g_partyRefused.fetch_add(1, std::memory_order_relaxed);
+            return true;
+        }
         return false;
     }
 
@@ -710,7 +818,8 @@ namespace apmf::castguard {
         if (!g_anyGuard.load(std::memory_order_relaxed) || !a_cc || !a_item) return false;
         const bool  offensive = Offensive(a_item);
         const float selfArea  = offensive ? 0.0f : SelfAoeArea(a_item);
-        if (!offensive && selfArea <= 0.0f) return false;
+        const bool  selfItem  = !offensive && a_item->GetDelivery() == RE::MagicSystem::Delivery::kSelf;
+        if (!offensive && !selfItem) return false;
         auto  attPtr = a_cc->attackerHandle.get();   // NiPointer<Actor>, refcounted for this scope (CastSeats' read)
         auto* who    = attPtr.get();
         if (!who) return false;
@@ -718,6 +827,11 @@ namespace apmf::castguard {
         std::uint32_t    flags = 0;
         APMF_API::Handle h     = APMF_API::kInvalidHandle;
         if (!ControlMap::Get().TryGetCastGuard(a_fid, flags, h)) return false;
+        if (selfItem && HoldsParty(h, flags, a_fid, who, a_item, "CheckStartCast (0x06)", false)) {
+            g_partyHeld.fetch_add(1, std::memory_order_relaxed);
+            return true;
+        }
+        if (!offensive && selfArea <= 0.0f) return false;   // a Self item with no bystander blast
         // An offensive item is LineOfFire's, a Self area item is kCastGuard_Bystanders'.
         if (offensive ? (flags & APMF_API::kCastGuard_LineOfFire) == 0 : (flags & APMF_API::kCastGuard_Bystanders) == 0)
             return false;

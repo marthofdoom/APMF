@@ -65,6 +65,12 @@
 //       while a bystander stands within area + kBlastPad of the CASTER (a fresh reading at 0x0A, an
 //       unknown reading holds at 0x06 like any offensive item). A RUNE is delivered at a target
 //       location, so it is a LineOfFire item (the blast test around the aim).
+//   (c) SELF BLAST, PARTY (kCastGuard_SelfBlastParty / kCastGuard_SelfBlastSummons, 2026-11-25, opt-in): the same Self
+//       area spell held while the PLAYER, a teammate or (second bit) a party summon / the player's horse is
+//       inside its radius + selfblast::kPartyPad. Its own set and its own distances: neither bit changes
+//       what (a) or (b) exclude. Unlike (b) an UNKNOWN reading refuses at 0x0A too. Rule: core/SelfBlast.h.
+//       0x0A is asked in the very call that lands the blast (MagicCaster cast, 1.6.1170 0x5BBD40 id 34407, 1.5.97
+//       0x54C950, 1.7.104 0x5CA880: CheckCast, then FindTargets), so no frame passes after the last test.
 // Weapon holds are attributed on the CombatAction facet (the ch.7 leaves), spell holds on Cast.
 //
 // ATTRIBUTION (Harbinger controller 1a). The competing source is the engine's own AI
@@ -112,7 +118,8 @@ namespace apmf::castguard {
 
     // core/CastGate.cpp 0x0A, after the engine said YES: true = refuse this cast (the caller
     // returns false with kMultipleCast). Hand casters only; kUnknown answers false.
-    bool DenyCheckCast(RE::Actor* a_actor, RE::FormID a_fid, RE::MagicItem* a_spell, allowance::Hand a_hand);
+    bool DenyCheckCast(RE::Actor* a_actor, RE::FormID a_fid, RE::MagicItem* a_spell, allowance::Hand a_hand,
+                       bool a_dual);
     // core/CastSeats.cpp 0x06 (combat thread): true = answer NO for this poll. The deliberating
     // actor is the controller's attacker, resolved only for an offensive item.
     bool HoldStartCast(RE::CombatController* a_cc, RE::MagicItem* a_item);

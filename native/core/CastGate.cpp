@@ -209,7 +209,7 @@ namespace apmf::castgate {
             // A WEAPON HIT'S ENCHANTMENT IS SKIPPED (onHit): nothing is launched, so a line of fire answers
             // nothing, and the hit has already landed. Read ONCE for the guard and the allow-list below.
             const bool onHit = handCaster && IsWeaponOnHit(actor, a_spell, callerHand);
-            if (handCaster && !onHit && apmf::castguard::DenyCheckCast(actor, fid, a_spell, callerHand)) {
+            if (handCaster && !onHit && apmf::castguard::DenyCheckCast(actor, fid, a_spell, callerHand, a_dual)) {
                 if (a_reason) *a_reason = RE::MagicSystem::CannotCastReason::kMultipleCast;
                 apmf::castobserve::NoteCheckCast(fid, static_cast<int>(src), subjectForm,
                                                  static_cast<std::uint32_t>(RE::MagicSystem::CannotCastReason::kMultipleCast),
