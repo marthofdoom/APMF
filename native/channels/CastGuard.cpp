@@ -25,6 +25,8 @@ namespace {
         if (b & APMF_API::kCastGuard_ChannelRight) s += "channel-bound-R ";
         if (b & APMF_API::kCastGuard_ChannelLeft) s += "channel-bound-L ";
         if (b & APMF_API::kCastGuard_Bystanders) s += "bystanders ";
+        if (b & APMF_API::kCastGuard_SelfBlastParty) s += "self-blast-party ";
+        if (b & APMF_API::kCastGuard_SelfBlastSummons) s += "self-blast-summons ";
         if (s.empty()) s = "none ";
         s.pop_back();
         return s;

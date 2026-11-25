@@ -2062,7 +2062,9 @@ The rule is the explicit form of #0/#1: #1 says "block the foreign input"; #18 a
   main thread from live positions (+ its own ray for exposure), never the engine's cached
   line of sight; (b) 0x06 answers NO on an unknown or stale (> 250 ms) measurement -- never
   clear by fallback (principle 7) -- while 0x0A refuses only on a fresh BLOCKED one, because
-  a NO at a release or a tick interrupts a cast and an unknown must not cut one; (c) the
+  a NO at a release or a tick interrupts a cast and an unknown must not cut one. ONE opt-in exception,
+  `kCastGuard_SelfBlastParty`: 0x0A refuses on unknown too, because the client asked that the blast never
+  lands on the party unproven (0x06 already needs a fresh CLEAR, so an unknown at 0x0A is a hitch); (c) the
   channel bound always admits the client's own claimed stream (a live `kIntent_Cast` claim on
   that hand naming the spell) -- it bounds the AI, never the client; (d) every refusal is
   attributed (Engine on the Cast facet, `core/Sources.h`) and stands only while the guard's

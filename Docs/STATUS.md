@@ -22,6 +22,12 @@ with the caller address) and the leaf entered in the 100 ms before it, (b) wheth
 and the interrupt, and the ch.15 / ch.8 deny lines of the same 100 ms, (e) the attack state and the magicka at the charge start, (f) the same for
 the gambit version that fires, side by side, (g) one run with ch.7 Offense denied for the claim's window: if it then fires, the attack act breaks
 the charge.
+## HEAD OF WORK 2026-11-25 -- ch.25 SELF BLAST, PARTY HOLD, branch `feat/self-blast-party` (from d01c2e3), NOT merged, NOT field run
+
+Closes the Harbinger half of MFO-B872 11. Two opt-in CastGuardFlags bits (4, 5), no ABI bump (49 is reserved for placed H1, and a 50 would
+make `abiVersion >= 49` true without it), detect by `CanServe`. `core/SelfBlast.{h,cpp}`, `core/CastGuard.cpp`, host test `tools/self_blast`. No hook,
+no address. Agentlog `_agentlogs/harbinger/self-blast-party.md`. Field check: `[ch.25] ... self blast, party` lines (0x06 held, 0x0A refused),
+the heartbeat's `self blast party` counts, the interrupt animation after an 0x0A refusal, and the cast claim ending on its TTL with the hand free.
 
 ## HEAD OF WORK 2026-11-24b -- H-M1 P-A fix round, branch `feat/hm1-pa2` (from 71ef4c9), NOT merged, NOT field run
 Review S3-1 (already fleeing: `Pick::kDenyOnly`, ranked by S1), S3-2 (short stop: accept inside the leash, 1 s wait outside), SEV-4 F4 (stale phase),

@@ -1546,7 +1546,24 @@ Attributed on the CombatAction facet (`Decide`'s facet argument, `:483`). Ground
 not held. (b) a Self-delivered hostile area spell or cloak (`SelfAoeArea`, cloak = `EffectArchetypes::kCloak` + its
 associated spell) is held at 0x0A (fresh) / 0x06 (unknown holds) while a bystander is within area + `kBlastPad` of the
 CASTER, on the Cast facet. Runes are TargetLocation spells, so they are LineOfFire items (the blast test at the aim).
-`RefuseReason` (`:565`) refuses an unknown bit (`kCastGuard_All` 0xF) and bit 3 while the measurement is unarmed.
+`RefuseReason` (`:565`) refuses an unknown bit (`kCastGuard_All` 0x3F) and bit 3 while the measurement is unarmed.
+SELF BLAST, PARTY (`kCastGuard_SelfBlastParty` bit 4, `kCastGuard_SelfBlastSummons` bit 5, 2026-11-25, opt-in, no ABI bump): (c) a Self-delivered
+harmful area spell held while the player, a teammate (bit 5: also a commanded creature of the caster / player / a teammate, a player-owned
+creature) is inside its blast + `selfblast::kPartyPad` 160u. Pure rule `core/SelfBlast.h` (host test `tools/self_blast`), engine facts and the wall ray
+`core/SelfBlast.cpp`, measured in `Measure`, asked by `HoldsParty` at 0x06 and 0x0A. To add a kind of member: `selfblast::CountsAsParty` + its
+one call in `Measure`. To change the radius: `selfblast::BlastOf`. `SelfAoeArea` / `Bystander` are untouched in meaning (`OwnedByPlayer` and
+`CommandedByParty` were lifted out of `Bystander`, same tests).
+Evidence (1.6.1170 / 1.5.97 / 1.7.104): the cast that lands asks CheckCast and then FindTargets in ONE function (0x5BBD40 / 0x54C950 / 0x5CA880,
+called by the `SpellFire` handlers 0x7B7BA0 / 0x7B7BF0), a NO runs InterruptCast (0x5BBFA0). FindTargets 0x5BC160 / 0x54CD10 / 0x5CACA0: area =
+EFIT feet x GMST fMagicUnitsPerFoot (0 with MGEF flag bit 11), actors by ORIGIN distance to the blast point (the magic node, or, when the costliest effect has an
+explosion, caster origin + height x EXPL vertical offset mult: 0x5BC9F5 / 0x54D5D3 / 0x5CB599; the ray starts there too), not dead, not the caster, and a ray
+(0x5BF0F0 / 0x54FA70 / 0x5CDC40, layer 45, the target's group, to mid height) unless `MagicItem::IgnoreLOS` (slot 0x5C). Explosion 0x146140 (dual 0x1462B0,
+AE), chain explosions (EXPL flag 7, 0x146220) skip the area pass.
+Explosion radius: record, or EFIT area x fMagicUnitsPerFoot when the effect has an area (AE 0x7CF2CA), x dual scale (`selfblast::ExplosionUnits`, the larger).
+Wall rays: only for a claim-driven blast, only members inside it, 8 members x 3 to 5 rays per caster measure (three round the magic node, one per claimed blast's
+explosion point, published as `Reading::points`). A blast whose point is not among them, or whose effects disagree on it, believes no wall (`ThroughWalls`). `JudgeNow` reads
+before it takes the clock. A blast claimed at another actor is a TargetActor proxy and not read; guard claims are not united (the client puts the bits in its one claim). STATED GAPS: an explosion's spawned projectile
+is not followed, the dual-cast scale is applied to a harmful explosion only at 0x0A, knock-down force without damage is not harm.
 STATED GAPS (proved in the field via the `[ch.25] ... Self area` and `attack leaf` log lines, not by this code): the
 hold is at the leaf's act() only, so a draw already in progress (the leaf's update(), slot 0x04, has no ch.25 seat)
 is not stopped mid-draw. The cloak / rune area figures (associated spell EFIT area x 64/3) are not field-verified.
@@ -1554,7 +1571,7 @@ Evidence that 0x0A covers the RELEASE: `ActorMagicCaster` slot 3 `RequestCastImp
 `call [vt+0x50]` on 1.6.1170 (`0x5B0840` / `0x5B0A90`), 1.5.97 (`0x541A70` / `0x541CB0`) and 1.7.104 (`0x5BF370` /
 `0x5BF5C0`); on NO, slot 6 runs the cannot-cast handler (AE `0x5B1C20`), which interrupts.
 - **What breaks:** a refusal at 0x0A on an UNKNOWN measurement (it would interrupt a release or a channel tick on
-  no evidence); 0x06 answering clear by fallback (principle 7); moving the 0x0A consult after the H1 override (claim-
+  no evidence; the ONE exception is the opt-in self blast party hold, INVARIANTS ch.25 (b)); 0x06 answering clear by fallback (principle 7); moving the 0x0A consult after the H1 override (claim-
   driven offensive casts would escape the line of fire) or onto the instant / voice caster (the client's direct
   stream and shouts are out of scope by contract); a lock or a form lookup on the seat path (the seats read FormIDs,
   the seqlock and one RCU snapshot; `Decide`'s `ClaimPriority` shared lock is taken only on a would-be refusal); a

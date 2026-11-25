@@ -5,6 +5,12 @@
 - **A claimed ward or bound weapon reaches the hand.** The game's own opinion on when they are worth it no longer refuses the claimed spell. Fleeing, an effect already running, too little Magicka and the ward's own Magicka floor still do.
 - **A new order is carried sooner**, and the log's mean walk back counts finished returns only. Unchanged cast guard heartbeats write no line.
 - **Not field run yet.** No ABI change.
+## Unreleased -- A blast round the caster waits for the party (ch.25, opt-in)
+
+- **A mod can keep a follower's Frost Nova or Fire Storm off the player and the party.** With the new `kCastGuard_SelfBlastParty` flag on a cast guard claim, a hostile Self area spell does not start and does not land while the player or a teammate stands inside its radius plus 160 units. `kCastGuard_SelfBlastSummons` also counts party summons and the player's horse. The check runs every frame and once more in the game's own call that lands the blast. A spell caught in the charge ends on the game's own interrupt.
+- **The radius is the game's own.** Area in feet times the game setting `fMagicUnitsPerFoot` (22), or a harmful explosion's radius. Someone proven to be behind a wall or a floor does not count, because the game's blast does not reach him either, unless the spell ignores line of sight.
+- **Nothing else changes.** The bystander hold keeps its exact set. No ABI bump: a mod asks with `CanServe`, and an older Harbinger refuses the flag.
+- **Not field run yet.** Built from the disassembly of 1.6.1170, 1.5.97 and 1.7.104.
 
 ## Unreleased -- Strict movement order: stand on that spot (ABI v48)
 

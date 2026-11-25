@@ -1473,7 +1473,9 @@ Handle h = g_apmf->RequestEx(actor, kIntent_CastGuard, kBasis, &p);
 | `kCastGuard_ChannelRight` | 2 | refuse the AI's own concentration cast on the right hand |
 | `kCastGuard_ChannelLeft` | 4 | refuse the AI's own concentration cast on the left hand |
 | `kCastGuard_Bystanders` | 8 | ABI 32. Hold a weapon attack or a Self area spell that would hit a bystander |
-| `kCastGuard_All` | 15 | all four (7 before ABI 32) |
+| `kCastGuard_SelfBlastParty` | 16 | no ABI bump, ask `CanServe`. Hold a hostile Self area spell while the player or a teammate is in its blast |
+| `kCastGuard_SelfBlastSummons` | 32 | with the flag above: count party summons and the player's horse too |
+| `kCastGuard_All` | 63 | all six (7 before ABI 32, 15 before the self blast flags) |
 
 #### What Harbinger enforces
 
@@ -1484,6 +1486,8 @@ Handle h = g_apmf->RequestEx(actor, kIntent_CastGuard, kBasis, &p);
 - A bow or crossbow shot (the `RangedAttack` and `AttackFromCover` behaviour tree leaves) is held while a bystander in the open is within 80 units of the line to the target.
 - A melee swing (`Attack`, `AttackLow`, `Bash`, `SpecialAttack`, `AttackFromCover`) is held while a bystander in the open is no farther from the actor than the target plus 48 units and within 35 degrees of the direction to it.
 - A Self delivered spell with a hostile area effect, or a cloak whose spell is hostile with an area, is held while a bystander is within that area plus 64 units of the caster.
+
+*Self blast, party (opt-in, not field run).* A Self delivered spell with a harmful area (Frost Nova, Fire Storm) is held while the player or a teammate is within its radius plus 160 units of the caster. With `kCastGuard_SelfBlastSummons`, so is what the actor, the player or a teammate commands, and a creature the player owns. The radius is the engine's: EFIT area times `fMagicUnitsPerFoot`, or the radius of an explosion that carries damage or an enchantment (the larger of its record radius and that area, times the dual-cast scale). For a spell a live cast claim names, a member proven to be behind world geometry does not count, unless the spell ignores line of sight, carries a harmful explosion, or the point its explosion blasts from is unknown. Claim the spell at target 0 or the actor: at anybody else it is minted as an aimed proxy, no longer Self delivered, and the flag does not read it. Guard claims are not united (the best basis wins whole), so put the flags in the actor's one guard claim. `CheckStartCast` answers no, and `CheckCast` refuses at the start, the release and the landing, unless a reading of 250 ms or newer says clear. A charge in flight ends on the engine's interrupt. The cast claim stands and may start again until it ends on its TTL or you release it, so bound your own `Repoint`. Lapsed unfired, `IsClaimLive` reads false and `GetClaimEndReason` does not read `kClaimEnd_Fired`. Cloaks are not covered. An older Harbinger refuses the flag: ask `CanServe` once with the flags you want.
 
 A weapon is held only on a fresh reading (250 ms or newer). An unknown reading lets the attack through and is counted in the heartbeat. The hold is taken when the leaf starts, so a draw already in progress is not stopped.
 
@@ -1511,7 +1515,7 @@ Bounded exactly like a cast claim. It dies at the window unless a `Repoint` rene
 
 #### Refusals
 
-At the call (`kInvalidHandle`, logged `[apmf][cast-guard] claim refused`): an APMF older than ABI 21 ("no channel serves intent 25"), the `CheckCast` gate not installed, no param, no guard bit or an unknown bit, a negative or non-finite `fval`, the player as the actor, and `kCastGuard_LineOfFire` or `kCastGuard_Bystanders` while the measurement is not armed. An APMF older than ABI 32 refuses `kCastGuard_Bystanders` as an unknown bit, so check `abiVersion >= 32` before you set it. Nothing is refused at the drain.
+At the call (`kInvalidHandle`, logged `[apmf][cast-guard] claim refused`): an APMF older than ABI 21 ("no channel serves intent 25"), the `CheckCast` gate not installed, no param, no guard bit or an unknown bit, a negative or non-finite `fval`, the player as the actor, `kCastGuard_LineOfFire`, `kCastGuard_Bystanders` or `kCastGuard_SelfBlastParty` while the measurement is not armed, and `kCastGuard_SelfBlastSummons` without `kCastGuard_SelfBlastParty`. An APMF older than ABI 32 refuses `kCastGuard_Bystanders` as an unknown bit, so check `abiVersion >= 32` before you set it. Nothing is refused at the drain.
 
 #### Worked example
 

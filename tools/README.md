@@ -7,3 +7,4 @@
 - `fire_once/fire_once_test.cpp` is the host test of the ch.8b fire-once ledger (`native/core/FireOnce.h`, ABI v47). Build line in the file.
 - `hold_activity/hold_activity_test.cpp` is the host test of the held engagement watchdog's activity reader (`native/core/HoldActivity.h`). Build line in the file.
 - `row_equip/row_equip_test.cpp` is the host test of the row equip admission's decision (`native/core/RowEquipLogic.h`) and of `native/core/LogDedupe.h`. Build line in the file.
+- `self_blast/self_blast_test.cpp` is the host test of the ch.25 self blast party hold (`native/core/SelfBlast.h`). Build line in the file.

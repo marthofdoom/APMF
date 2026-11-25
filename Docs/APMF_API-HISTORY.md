@@ -506,3 +506,6 @@ The header: `kABIVersion` 46, `enum CastSeatCoverage`, and `APMF_ServeInfo::rese
 **How a client reads it.** `CanServe` (any query that fills the struct) writes the bits. Read `castSeats` only when `abiVersion >= 46`: an older APMF writes 0 there, which reads as "nothing covered" and is wrong for the ten rows it does seat. A row bit says the seats are installed on this build, not that a cast will fire.
 
 **Degrade.** An APMF under v46: Stagger / Disarm / TargetEffect / Paralyze claims are served by the engine's own answers (often never equipped) and a spell above the NPC's skill gets no item. The client keeps whatever it did before for those.
+NO BUMP (2026-11-25, MFO-B872 11): CastGuardFlags bits 4 and 5, kCastGuard_SelfBlastParty and kCastGuard_SelfBlastSummons (kCastGuard_All 0xF to
+0x3F). abiVersion stays 48: 49 is reserved for the placed spells' point seat, and a 50 would tell a client gating on 49 that it is there. A client
+asks CanServe with the bits. An APMF without them REFUSES the claim and drops a Repoint.
