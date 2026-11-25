@@ -24,6 +24,15 @@ namespace apmf::movelogic {
         static constexpr std::uint64_t kLineMs         = 3000;    // per-actor status line
         static constexpr std::uint64_t kSilentMs       = 60000;   // live in combat and never asked: say so
         static constexpr std::uint64_t kPickGapMs      = 1000;    // a pick-to-pick gap counts at most this much phase time
+        static constexpr std::uint64_t kStaleMs        = 1000;    // no pick for this long (the selector re-picks every 0.25 s): the
+                                                                  //   phase of the last one is not reported any more
+        static constexpr std::uint64_t kChangeLineMs   = 500;     // phase-change / displaced lines, per order
+        static constexpr std::uint64_t kRepointLineMs  = 1000;    // PUBLISHED / re-point SUMMARY lines, per actor
+        static constexpr std::uint32_t kShortStopEnds  = 2;       // ended returns in a row without progress
+        static constexpr float         kProgress       = 8.0f;    // a return that brought him this much nearer was progress
+        static constexpr std::uint64_t kShortHoldMs    = 1000;    // past the leash and no progress: stand this long, then try again
+        static constexpr std::uint64_t kFleeLatchMs    = 1500;    // Flee stays refused this long after isFleeing was last really seen:
+                                                                  //   a switched-off area is looked at again only every 1.0 s
     };
 
     inline constexpr float kCoordBound = 4000000.0f;   // channels/CombatApproach.h kPointCoordBound (asserted there)
@@ -33,6 +42,7 @@ namespace apmf::movelogic {
         kOrig,     // every seat returns the engine's own answer
         kStand,    // child 0 (the native wait) says yes
         kTravel,   // child 4 (Return To Combat Area) says yes
+        kDenyOnly, // Flee and Hide say no, every other seat returns the engine's own answer (never travel)
     };
 
     struct Order {
@@ -48,6 +58,13 @@ namespace apmf::movelogic {
         std::uint32_t arrivedCount   = 0;
         std::uint32_t displacedCount = 0;
         std::uint64_t phaseSinceMs   = 0;
+        // short stop (hm1-seat-brief section 6): returns that ended before arriveR
+        std::uint32_t shortEnds  = 0;      // ended in a row without progress
+        float         refDist    = 0.0f;   // the distance progress is measured from
+        std::uint64_t holdUntilMs = 0;     // no progress outside the leash: he stands until then
+        float         stopError  = 0.0f;   // the distance a short stop was accepted at (0 = none)
+        std::uint32_t shortStops = 0;      // accepted
+        std::uint32_t shortHolds = 0;      // outside the leash: 1 s waits
     };
 
     constexpr bool Strict(std::uint32_t a_mode) {
@@ -63,24 +80,77 @@ namespace apmf::movelogic {
         a_r.phaseSinceMs = a_now;
     }
 
-    // One pick: the actor is `a_dist` from the current target, which his combat area carries.
-    inline Pick Step(const Order& a_o, Runtime& a_r, float a_dist, std::uint64_t a_now) {
+    inline void BeginTravel(Runtime& a_r, std::uint32_t a_phase, float a_dist, std::uint64_t a_now) {
+        SetPhase(a_r, a_phase, a_now);
+        a_r.shortEnds   = 0;
+        a_r.refDist     = a_dist;
+        a_r.holdUntilMs = 0;
+        a_r.stopError   = 0.0f;
+    }
+
+    // The order's target is NOT on his area (the area is off or somebody else's), or the engine was passed something.
+    // A flee that already runs switches his area off, so the order could never be carried while it lasts: Flee and
+    // Hide are refused and nothing else is answered. Only where the claim outranks the source it substitutes.
+    constexpr Pick Uncarried(bool a_passed, bool a_outranked, bool a_fleeing, bool a_ranks) {
+        return !a_passed && !a_outranked && a_fleeing && a_ranks ? Pick::kDenyOnly : Pick::kOrig;
+    }
+
+    // The `a_fleeing` of Uncarried for one uncarried pick. Flee's context pop clears isFleeing before the area is back
+    // (up to 1 s) while Flee's value still says yes, so the answer outlives the flag by kFleeLatchMs. Only a pick that
+    // really saw the flag moves `a_seenMs` (0 = never).
+    inline bool FleeLatched(std::uint64_t& a_seenMs, bool a_isFleeing, std::uint64_t a_now) {
+        if (a_isFleeing) a_seenMs = a_now;
+        return a_isFleeing || (a_seenMs != 0 && a_now - a_seenMs <= MoveTuning::kFleeLatchMs);
+    }
+
+    // The phase to report `a_silentMs` after the last pick.
+    constexpr std::uint32_t PhaseNow(std::uint32_t a_phase, std::uint32_t a_passed, std::uint64_t a_silentMs) {
+        using namespace APMF_API;
+        if (a_phase == kMovePhase_None || a_phase == kMovePhase_Pending || a_silentMs <= MoveTuning::kStaleMs) return a_phase;
+        return (a_passed & kMovePass_EssentialDown) != 0 ? static_cast<std::uint32_t>(kMovePhase_Yielded)
+                                                         : static_cast<std::uint32_t>(kMovePhase_NotCarried);
+    }
+
+    // One pick: the actor is `a_dist` from the current target, which his combat area carries. `a_returnEnded` = the
+    // return child the previous pick started has ended (the selector is entered again, with that answer behind it).
+    inline Pick Step(const Order& a_o, Runtime& a_r, float a_dist, std::uint64_t a_now, bool a_returnEnded = false) {
         using namespace APMF_API;
         if (!Strict(a_o.mode)) return Pick::kOrig;
         switch (a_r.phase) {
         case kMovePhase_Standing:
             if (a_dist <= a_o.leashR) return Pick::kStand;
             ++a_r.displacedCount;
-            SetPhase(a_r, kMovePhase_Returning, a_now);
+            BeginTravel(a_r, kMovePhase_Returning, a_dist, a_now);
             return Pick::kTravel;
         case kMovePhase_Travelling:
         case kMovePhase_Returning:
             break;
         default:   // Pending, or back from Yielded / NotCarried: by distance, no history
-            SetPhase(a_r, kMovePhase_Travelling, a_now);
+            BeginTravel(a_r, kMovePhase_Travelling, a_dist, a_now);
             break;
         }
-        if (!(a_dist <= a_o.arriveR)) return Pick::kTravel;   // a NaN distance travels
+        if (!(a_dist <= a_o.arriveR)) {   // a NaN distance travels
+            if (a_now < a_r.holdUntilMs) return Pick::kStand;
+            if (a_r.holdUntilMs != 0) {   // the wait is over: a fresh try
+                a_r.holdUntilMs = 0;
+                a_r.refDist     = a_dist;
+            }
+            if (!a_returnEnded) return Pick::kTravel;
+            if (a_r.refDist - a_dist >= MoveTuning::kProgress) {
+                a_r.shortEnds = 0;
+                a_r.refDist   = a_dist;
+                return Pick::kTravel;
+            }
+            if (++a_r.shortEnds < MoveTuning::kShortStopEnds) return Pick::kTravel;
+            a_r.shortEnds = 0;
+            if (!(a_dist <= a_o.leashR)) {
+                a_r.holdUntilMs = a_now + MoveTuning::kShortHoldMs;
+                ++a_r.shortHolds;
+                return Pick::kStand;   // the phase stays: he is not there
+            }
+            a_r.stopError = a_dist;
+            ++a_r.shortStops;
+        }
         if (Counts(a_o.mode) && a_r.arrivedCount == 0) a_r.arrivedCount = 1;
         SetPhase(a_r, kMovePhase_Standing, a_now);
         return Pick::kStand;
@@ -141,6 +211,7 @@ namespace apmf::movelogic {
         float         leashR = 0.0f, arriveR = 0.0f;
         std::uint32_t waypointCount = 0;   // 0 = one point
         std::uint32_t gen = 0;             // the client-visible order sequence
+        std::uint32_t ranks = 0;           // 1 = the claim outranks the source its area substitutes (S1's last verdict)
         std::uint32_t serial = 0;          // changes on every (re)publication that must reset the runtime block
         std::array<std::array<float, 3>, MoveTuning::kMaxWaypoints> points{};
 
@@ -160,6 +231,7 @@ namespace apmf::movelogic {
             m_arriveR.store(a_s.arriveR, std::memory_order_release);
             m_wpCount.store(a_s.waypointCount, std::memory_order_release);
             m_gen.store(a_s.gen, std::memory_order_release);
+            m_ranks.store(a_s.ranks, std::memory_order_release);
             m_serial.store(a_s.serial, std::memory_order_release);
             for (std::size_t i = 0; i < a_s.points.size(); ++i)
                 for (std::size_t k = 0; k < 3; ++k) m_points[i][k].store(a_s.points[i][k], std::memory_order_release);
@@ -181,6 +253,7 @@ namespace apmf::movelogic {
                 s.arriveR       = m_arriveR.load(std::memory_order_acquire);
                 s.waypointCount = m_wpCount.load(std::memory_order_acquire);
                 s.gen           = m_gen.load(std::memory_order_acquire);
+                s.ranks         = m_ranks.load(std::memory_order_acquire);
                 s.serial        = m_serial.load(std::memory_order_acquire);
                 for (std::size_t i = 0; i < s.points.size(); ++i)
                     for (std::size_t k = 0; k < 3; ++k) s.points[i][k] = m_points[i][k].load(std::memory_order_acquire);
@@ -194,7 +267,7 @@ namespace apmf::movelogic {
 
     private:
         std::atomic<std::uint32_t> m_seq{ 0 }, m_fid{ 0 }, m_owner{ 0 }, m_mode{ 0 }, m_flags{ 0 }, m_wpCount{ 0 }, m_gen{ 0 },
-            m_serial{ 0 };
+            m_ranks{ 0 }, m_serial{ 0 };
         std::atomic<float> m_leashR{ 0.0f }, m_arriveR{ 0.0f };
         std::array<std::array<std::atomic<float>, 3>, MoveTuning::kMaxWaypoints> m_points{};
     };

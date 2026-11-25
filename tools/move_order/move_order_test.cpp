@@ -95,6 +95,66 @@ int main() {
         CHECK(Step(Order{ kMove_Free, 0, 64, 24 }, f, 500.0f, 1) == Pick::kOrig && f.phase == kMovePhase_Pending);
         CHECK(Step(Order{ kMove_Disengage, 0, 64, 24 }, f, 500.0f, 1) == Pick::kOrig);
     }
+    {   // Short stop: two ended returns without progress.
+        Runtime r;
+        CHECK(Step(stand, r, 200.0f, 1) == Pick::kTravel && r.refDist == 200.0f);
+        CHECK(Step(stand, r, 120.0f, 2) == Pick::kTravel && r.shortEnds == 0);                // an update pick counts nothing
+        CHECK(Step(stand, r, 40.0f, 3, true) == Pick::kTravel && r.shortEnds == 0);           // ended, but it brought him nearer
+        CHECK(Step(stand, r, 39.0f, 4, true) == Pick::kTravel && r.shortEnds == 1);
+        CHECK(Step(stand, r, 39.0f, 5) == Pick::kTravel && r.shortEnds == 1);
+        CHECK(Step(stand, r, 38.0f, 6, true) == Pick::kStand && r.phase == kMovePhase_Standing && r.stopError == 38.0f && r.shortStops == 1);
+        CHECK(Step(stand, r, 64.0f, 7, true) == Pick::kStand && r.shortEnds == 0);            // standing: entered again, counts nothing
+        CHECK(Step(stand, r, 70.0f, 8) == Pick::kTravel && r.phase == kMovePhase_Returning && r.stopError == 0.0f && r.refDist == 70.0f);
+        CHECK(Step(stand, r, 69.0f, 9, true) == Pick::kTravel);
+        CHECK(Step(stand, r, 69.0f, 10, true) == Pick::kStand && r.phase == kMovePhase_Returning && r.shortHolds == 1 && r.stopError == 0.0f);
+        CHECK(Step(stand, r, 69.0f, 1009) == Pick::kStand && r.phase == kMovePhase_Returning);   // the wait
+        CHECK(Step(stand, r, 69.0f, 1010) == Pick::kTravel && r.holdUntilMs == 0 && r.shortEnds == 0);
+        CHECK(Step(stand, r, 69.0f, 1011, true) == Pick::kTravel && Step(stand, r, 69.0f, 1012, true) == Pick::kStand && r.shortHolds == 2);
+        CHECK(Step(stand, r, 20.0f, 1013) == Pick::kStand && r.phase == kMovePhase_Standing);    // arrived inside the wait
+        Runtime e;   // exactly the leash is inside, progress of exactly 8 counts
+        Step(stand, e, 72.0f, 1);
+        CHECK(Step(stand, e, 64.0f, 2, true) == Pick::kTravel && e.shortEnds == 0);
+        CHECK(Step(stand, e, 64.0f, 3, true) == Pick::kTravel && Step(stand, e, 64.0f, 4, true) == Pick::kStand && e.stopError == 64.0f);
+        Runtime q;   // a NaN distance never stands by a short stop
+        Step(stand, q, nan, 1);
+        Step(stand, q, nan, 2, true);
+        CHECK(Step(stand, q, nan, 3, true) == Pick::kStand && q.phase == kMovePhase_Travelling && q.shortStops == 0);
+        Runtime y;   // the wait does not survive a NotCarried interlude
+        Step(stand, y, 90.0f, 1);
+        Step(stand, y, 90.0f, 2, true);
+        CHECK(Step(stand, y, 90.0f, 3, true) == Pick::kStand);
+        y.phase = kMovePhase_NotCarried;
+        CHECK(Step(stand, y, 90.0f, 4) == Pick::kTravel && y.holdUntilMs == 0);
+    }
+    {   // Not carried: a running flee is refused only by a claim that outranks the area's source.
+        CHECK(Uncarried(false, false, true, true) == Pick::kDenyOnly);
+        CHECK(Uncarried(false, false, true, false) == Pick::kOrig);    // the source stands (kSeatStood)
+        CHECK(Uncarried(false, false, false, true) == Pick::kOrig);    // not fleeing
+        CHECK(Uncarried(true, false, true, true) == Pick::kOrig);      // flight / leaving water passes
+        CHECK(Uncarried(false, true, true, true) == Pick::kOrig);      // a higher-priority area
+    }
+    {   // The flee pops, the area comes back 1.0 s later, the selector asks every 0.25 s: refused all the way.
+        std::uint64_t seen = 0;
+        const auto    ask  = [&](bool a_isFleeing, std::uint64_t a_now) { return Uncarried(false, false, FleeLatched(seen, a_isFleeing, a_now), true); };
+        CHECK(ask(false, 500) == Pick::kOrig);    // never fled: nothing latched
+        CHECK(ask(true, 1000) == Pick::kDenyOnly);
+        for (std::uint64_t now = 1250; now <= 2250; now += 250) CHECK(ask(false, now) == Pick::kDenyOnly);
+        CHECK(ask(false, 2500) == Pick::kDenyOnly);
+        CHECK(ask(false, 2501) == Pick::kOrig);   // a latched answer never extends the latch
+        CHECK(ask(true, 3000) == Pick::kDenyOnly && seen == 3000);
+        CHECK(Uncarried(true, false, FleeLatched(seen, false, 3100), true) == Pick::kOrig);   // the gates stay
+        CHECK(Uncarried(false, true, FleeLatched(seen, false, 3100), true) == Pick::kOrig);
+        CHECK(Uncarried(false, false, FleeLatched(seen, false, 3100), false) == Pick::kOrig);
+        seen = 0;   // a new order (Reset)
+        CHECK(ask(false, 3200) == Pick::kOrig);
+    }
+    {   // The reported phase once the engine stopped asking.
+        CHECK(PhaseNow(kMovePhase_Standing, 0, 1000) == kMovePhase_Standing);
+        CHECK(PhaseNow(kMovePhase_Standing, 0, 1001) == kMovePhase_NotCarried);
+        CHECK(PhaseNow(kMovePhase_Standing, kMovePass_EssentialDown, 1001) == kMovePhase_Yielded);
+        CHECK(PhaseNow(kMovePhase_Travelling, kMovePass_Flight, 5000) == kMovePhase_NotCarried);
+        CHECK(PhaseNow(kMovePhase_Pending, 0, 99999) == kMovePhase_Pending);
+    }
     for (const auto mode : { kMove_GoTo, kMove_Kite }) {   // arrival reported once per order
         const Order o{ mode, 0, 64.0f, 24.0f };
         Runtime     r;
@@ -113,7 +173,7 @@ int main() {
         auto make = [](std::uint32_t i) {
             Snapshot s;
             s.fid = 0x14;
-            s.owner = s.mode = s.flags = s.waypointCount = s.gen = s.serial = i;
+            s.owner = s.mode = s.flags = s.waypointCount = s.gen = s.ranks = s.serial = i;
             s.leashR = s.arriveR = static_cast<float>(i);
             for (auto& p : s.points) p = { static_cast<float>(i), static_cast<float>(i), static_cast<float>(i) };
             return s;

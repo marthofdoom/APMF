@@ -22,8 +22,9 @@ namespace apmf::moveorder {
     // GAME THREAD. The order on `a_s.fid` is live with these values (a_s.serial is filled here). Writes only what
     // changed; a new a_s.gen starts the runtime block over. False = no free slot.
     bool Publish(movelogic::Snapshot a_s, std::uint64_t a_worldMs);
-    // GAME THREAD. The order is not live any more (SUMMARY line). No-op without a slot.
-    void Clear(RE::FormID a_fid, const char* a_why, std::uint64_t a_worldMs);
+    // GAME THREAD. The order is not live any more (SUMMARY line; `a_repoint` = its successor follows, the line is throttled).
+    // No-op without a slot.
+    void Clear(RE::FormID a_fid, const char* a_why, std::uint64_t a_worldMs, bool a_repoint = false);
     void ResetAll(const char* a_why);
     std::uint32_t NextGen();
 

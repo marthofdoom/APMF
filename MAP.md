@@ -2129,6 +2129,9 @@ Spec MFO `Docs/research/2026-11/hm1-seat-brief.md`. Six `write_vfunc` seats, all
 `ValueThunk<I>`). `IsMovementSelector` = structure, never vtable or name alone. `DecideNow` (actor's combat thread): slot -> Flight and
 Exit Water asked -> `combatapproach::CarryOf` -> `movelogic::Step` (pure, `tools/move_order`). Slot table: 64 seqlock slots written on the game
 thread by ch.24 (`Publish` from Poll, `Clear` from Apply / End / Release / Poll, `ResetAll`), runtime block written by the actor's combat thread.
+`feat/hm1-pa2`: `Uncarried` (already fleeing -> `kDenyOnly`, gated on `kSeatRanked` = S1's verdict, kept while the area is disabled, carried as
+`Snapshot::ranks`; `FleeLatched` keeps it 1.5 s past the last real isFleeing), `Step`'s short stop (`a_returnEnded` = asked from the selector's ACT with a travel answer behind it), `PhaseNow` (a
+phase is not reported 1 s after the last pick). Line throttles: `kChangeLineMs` per order, `kRepointLineMs` per actor (`g_gate`).
 - **To add:** a mode = `Strict` / `Counts` in `MoveOrderLogic.h`. A child that passes = `kAskChildren`. A denied child = one `ValueThunk`
   row (`kValueSeats` + `InstallValue`). A tunable = `MoveTuning`. Lifecycle = `Publish` / `Clear` callers in `channels/CombatApproach.cpp`.
 - **Depended on by:** `channels/CombatApproach.cpp` (Poll, Apply, End, Release, ResetAll, `StrictRefusal`), `core/ControlMap.cpp` (the sync refusal),
@@ -2137,7 +2140,8 @@ thread by ch.24 (`Publish` from Poll, `Clear` from Apply / End / Release / Poll,
   answering travel on an area that does not carry the target (he paths to another centre); answering outside the bracket or for another
   node (the Hide link vtable is shared with LowCombat); failing a movement child instead of answering its value (act / pop imbalance); writing
   the slot table off the game thread; a lock in a seat. `cbt::ResolveController` (moved from ActionGate to `BehaviorTreeCatalog.h`, the one
-  reader for ActionGate, MoveProbe and this) may return its hypothesis A, which is not a CombatController: `WhoIs` rejects that.
+  reader for ActionGate, MoveProbe and this) may return its hypothesis A, which is not a CombatController: `WhoIs` rejects that. Writing
+  `isFleeing` (the engine's context pop owns it); denying on `kSeatStood` alone (a fleeing actor's area is disabled, S1 returns before that bit).
 
 ### `native/core/MoveProbe.{h,cpp}` — `[Probe] bMoveProbe`: movement probes P1 / P2 / P3 (PASSIVE, 2026-11-24)
 MFO `Docs/research/2026-11/tight-movement-plan.md` section 9. Default OFF (installs nothing, `On()` / `Watching()` false). A

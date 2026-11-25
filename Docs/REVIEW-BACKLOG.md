@@ -1499,3 +1499,13 @@ Three things the engine's road gives up or leaves open, each said in `core/Comba
 - **(SEV-5) re-check R1 residual:** the unclaimed leftover item is still scored and can win its category before it is refused.
 - **Author's own open notes (55f7a60):** the Stagger and Disarm casters were never seen built in a field log; category 5 items are walked after weapons; a staff of the four rows is unexercised and its charge is not asked at the row equip admission; an admitted item is still scored (not equipped) until the rebuild.
 
+
+### feat/hm1-pa (Opus 5.5 tier-A review, 2026-11-24, against 828600ef): nothing above SEV-3; S3-1, S3-2, F4, F5, F6, F7 drained on `feat/hm1-pa2`
+- **(SEV-4, OPEN, P-C)** CARRY FLICKER: "Poll moves the clamped point every 100 ms while a ch.23 anchor moves, so in the grazing ring it is NotCarried most of the time ... publish the clamp only when it moved > 16." Only the line throttle is done.
+- **(SEV-5) F8:** "g_moveSel == node skips Structural (a freed/rebuilt tree would be trusted; not possible in the engine)."
+- **(SEV-5) F9:** "tag moveorder-* falls in FacetForTag -> kCore in the census, like substrate-*."
+- **(SEV-5)** SLOTS: "a stale Decide that passed Read before Clear can write a few Run atomics of the next owner (us window; 2 s quarantine)."
+- **Author, against feat/hm1-pa2:** a Dodge that takes the movement resource during a return also re-enters the selector through its act, so it counts as an ended return (it only matters without 8 units of progress).
+
+### feat/hm1-pa2 (Opus 5.5 tier-A review, 2026-11-24, against 29450028): nothing above SEV-3; H1 fixed on the branch
+- **(SEV-4) H2:** "any act re-entry (dodge, stagger, attack taking movement) counts as an ended return. Inside the leash: accepted Standing with stopError <= leashR. Outside: 1 s stand in contact, repeat. Bounded, visible in SUMMARY. Backlog."
