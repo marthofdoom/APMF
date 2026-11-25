@@ -4,6 +4,20 @@ Updated 2026-11-24 (ch.8b fire once branch `feat/cast-fire-once` first; 2026-11-
 shipped, what's probe-gated, what's next. Keep this current in the SAME change as any
 build/finding/workflow change.
 
+## HEAD OF WORK 2026-11-24 -- ch.24 STRICT MOVEMENT ORDER H-M1 piece P-A (ABI v48), branch `feat/hm1-pa`, NOT merged, NOT field run
+
+Spec: MFO `Docs/research/2026-11/hm1-seat-brief.md`. Agentlog `_agentlogs/harbinger/hm1-pa.md`. P-A = header, slot table, the two selector
+brackets, the four value seats, the implicit Stand order, `GetMoveOrderState`. NOT in P-A: M3 repair / Blocked / Unreachable / short
+stop (P-B, so a failed return path still ends as EngineDropped), `SetMoveOrder` (answers ModeNotServed, P-C), Path and
+AttackInPlace (P-D, their caps bits are clear).
+Where the code differs from the brief, both proven: (1) `moveorder::Install` runs BEFORE `actiongate::Install`, not after ch.24: the
+substrate's parameterised-node list already replaces the selector's slot 0x02 there, so the brief's byte guard would always
+refuse. (2) The Return link's `+0x28` is a `CombatBehaviorTreeLinkNode` (name "ReturnToCombatArea"), not the leaf, so the
+identity test checks that. (3) The synchronous refusal is in `core/ControlMap.cpp`.
+Field check (MFO dev hold + the flag): `[move] Movement Selector identified`, `seat OBSERVED: child 0` and `child 4`, PUBLISHED / ARRIVED /
+DISPLACED / RETURNED, the 3 s line, the SUMMARY. An ERROR `the selector was never bracketed` after 60 s = stop, do not build P-B.
+Host test: `tools/move_order` (54 checks). Keep `[Probe] bMoveProbe=1` in the session.
+
 ## HEAD OF WORK 2026-11-24 -- MOVEMENT PROBES P1 / P2 / P3 + the row verdict line, branch `feat/move-probes`, NOT merged, NOT field run
 
 MFO plan `Docs/research/2026-11/tight-movement-plan.md` sections 7(b) step 1 and 9, package H-P. Agentlog

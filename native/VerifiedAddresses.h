@@ -19,7 +19,7 @@
 
 namespace apmf::VerifiedAddresses
 {
-	// 1.6.1170.0: 314 rows
+	// 1.6.1170.0: 321 rows
 	inline constexpr REL::SelfCheck::Row kRows_1_6_1170[] = {
 		{ 207886, 0x18A5558, 0x0, 0, {  }, "Character" },
 		{ 207896, 0x18A5FE8, 0x0, 0, {  }, "Character.ActorValueOwner" },
@@ -335,9 +335,16 @@ namespace apmf::VerifiedAddresses
 		{ 12017, 0x16BFC0, 0x0, 0, {  }, "CombatStyle.ExtraDataList.GetCombatStyle" },
 		{ 33239, 0x559BD0, 0x0, 0, {  }, "CombatStyle.CombatController.UpdateCombatStyle" },
 		{ 36960, 0x656530, 0x0, 0, {  }, "CombatOps.TaskQueue.QueueStopCombat" },
+		{ 213963, 0x18E5740, 0x0, 0, {  }, "MoveOrder.Link.EssentialDown.vtable" },
+		{ 213967, 0x18E5800, 0x0, 0, {  }, "MoveOrder.Link.Flee.vtable" },
+		{ 213655, 0x18E2EB0, 0x0, 0, {  }, "MoveOrder.Link.Hide.vtable" },
+		{ 213969, 0x18E5860, 0x0, 0, {  }, "MoveOrder.Link.Return.vtable" },
+		{ 213965, 0x18E57A0, 0x0, 0, {  }, "MoveOrder.Link.Flight.vtable" },
+		{ 213971, 0x18E58C0, 0x0, 0, {  }, "MoveOrder.Link.ExitWater.vtable" },
+		{ 212176, 0x18D8EB8, 0x0, 0, {  }, "MoveOrder.LinkNode.vtable" },
 	};
 
-	// 1.5.97.0: 313 rows
+	// 1.5.97.0: 320 rows
 	inline constexpr REL::SelfCheck::Row kRows_1_5_97[] = {
 		{ 261397, 0x165DA40, 0x0, 0, {  }, "Character" },
 		{ 261402, 0x165E4D0, 0x0, 0, {  }, "Character.ActorValueOwner.SE" },
@@ -652,9 +659,16 @@ namespace apmf::VerifiedAddresses
 		{ 11878, 0x1246E0, 0x0, 0, {  }, "CombatStyle.ExtraDataList.GetCombatStyle" },
 		{ 32492, 0x4FE5B0, 0x0, 0, {  }, "CombatStyle.CombatController.UpdateCombatStyle" },
 		{ 35985, 0x5C57A0, 0x0, 0, {  }, "CombatOps.TaskQueue.QueueStopCombat" },
+		{ 266897, 0x169FEF0, 0x0, 0, {  }, "MoveOrder.Link.EssentialDown.vtable" },
+		{ 266899, 0x169FFB0, 0x0, 0, {  }, "MoveOrder.Link.Flee.vtable" },
+		{ 266656, 0x169D318, 0x0, 0, {  }, "MoveOrder.Link.Hide.vtable" },
+		{ 266900, 0x16A0010, 0x0, 0, {  }, "MoveOrder.Link.Return.vtable" },
+		{ 266898, 0x169FF50, 0x0, 0, {  }, "MoveOrder.Link.Flight.vtable" },
+		{ 266901, 0x16A0070, 0x0, 0, {  }, "MoveOrder.Link.ExitWater.vtable" },
+		{ 265758, 0x1692240, 0x0, 0, {  }, "MoveOrder.LinkNode.vtable" },
 	};
 
-	// 1.7.104.0: 311 rows
+	// 1.7.104.0: 318 rows
 	// 85 NOT VERIFIED on 1.7.104.0, deliberately absent from this table (the seat is refused):
 	//   Character.ActorValueOwner.SE (1.6.1170 id -): no 1.6.1170 (AE) id: the 1.7.104 map is keyed by AE id (1.5.97-only seat)
 	//   ActionGate.Hold.ParallelDataPush (1.6.1170 id 47532): id 47532 is not in the idmap
@@ -1000,6 +1014,13 @@ namespace apmf::VerifiedAddresses
 		{ 41558, 0x78DB90, 0x0, 0, {  }, "CombatMove.BGSActionData.Ctor" },
 		{ 188603, 0x18058F8, 0x0, 0, {  }, "CombatMove.TESActionData" },
 		{ 13894, 0x1C8530, 0x0, 0, {  }, "CombatMove.BGSDefaultObjectManager.GetSingleton" },
+		{ 213963, 0x1963D08, 0x0, 0, {  }, "MoveOrder.Link.EssentialDown.vtable" },
+		{ 213967, 0x1963DC8, 0x0, 0, {  }, "MoveOrder.Link.Flee.vtable" },
+		{ 213655, 0x1961478, 0x0, 0, {  }, "MoveOrder.Link.Hide.vtable" },
+		{ 213969, 0x1963E28, 0x0, 0, {  }, "MoveOrder.Link.Return.vtable" },
+		{ 213965, 0x1963D68, 0x0, 0, {  }, "MoveOrder.Link.Flight.vtable" },
+		{ 213971, 0x1963E88, 0x0, 0, {  }, "MoveOrder.Link.ExitWater.vtable" },
+		{ 212176, 0x1957480, 0x0, 0, {  }, "MoveOrder.LinkNode.vtable" },
 		{ 0, 0x82D2C0, 0x0, 0, {  }, "AiCastSeats.Melee.CalculateScore" },
 		{ 0, 0x82D790, 0x0, 0, {  }, "AiCastSeats.Ranged.CalculateScore" },
 		{ 0, 0x82DCD0, 0x0, 0, {  }, "AiCastSeats.Shield.CalculateScore" },

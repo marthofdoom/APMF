@@ -4158,7 +4158,7 @@
     "0x02",
     "0x03"
    ],
-   "source": "native/core/BehaviorTreeCatalog.h (kParamLeaves); ActionGate.cpp act/pop for the combat substrate's allow-list (review F1 of a512763)",
+   "source": "native/core/BehaviorTreeCatalog.h (kParamLeaves); ActionGate.cpp act/pop for the combat substrate's allow-list (review F1 of a512763); core/MoveOrder.cpp (identity of the Essential Down child, no write)",
    "doc": "MIT fork Offsets_VTABLE.h:1792 (VTABLE_CombatBehaviorTreeNodeObject1_CombatBehaviorIdle_float_); RTTI name identical on 1.6.1170 and 1.5.97"
   },
   {
@@ -4377,9 +4377,10 @@
    },
    "slots": [
     "0x02",
-    "0x03"
+    "0x03",
+    "0x04"
    ],
-   "source": "native/core/BehaviorTreeCatalog.h (kParamLeaves); ActionGate.cpp act/pop for the combat substrate's allow-list (review F1 of a512763)",
+   "source": "native/core/BehaviorTreeCatalog.h (kParamLeaves); ActionGate.cpp act/pop for the combat substrate's allow-list (review F1 of a512763); core/MoveOrder.cpp (ch.24 strict order, ABI v48: slots 0x02 and 0x04 pick brackets B1 / B2, chaining)",
    "doc": "MIT fork Offsets_VTABLE.h:3664 (VTABLE_CombatBehaviorTreeNodeObject1_CombatBehaviorDynamicSelector_ConditionalChildSelector__float_); RTTI name identical on 1.6.1170 and 1.5.97"
   },
   {
@@ -5600,6 +5601,112 @@
    },
    "source": "native/core/CombatOps.cpp (Install: SeatVerified; PostToEngine: the call). INVARIANTS #4a",
    "doc": "Docs/research/stopcombat-engine-road-re.md (2026-11-16): the sender, the poster, the drain and its two call sites read on the three executables"
+  },
+  {
+   "seat": "MoveOrder.Link.EssentialDown.vtable",
+   "kind": "vtable",
+   "construct": "REL::VariantID(266897, 213963, 0)",
+   "rtti": ".?AV?$CombatBehaviorTreeValueNodeT@IV?$CombatBehaviorExpression@V?$CombatBehaviorMemberFunc@VActor@@P81@EBA_NXZ@@@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 213963,
+    "1.5.97": 266897
+   },
+   "slots": [
+    "0x0A"
+   ],
+   "source": "native/core/MoveOrder.cpp (child 0 of the Movement Selector: V0)",
+   "doc": "MFO Docs/research/2026-11/hm1-seat-brief.md 3.2; agentlog harbinger/hm1-pa.md"
+  },
+  {
+   "seat": "MoveOrder.Link.Flee.vtable",
+   "kind": "vtable",
+   "construct": "REL::VariantID(266899, 213967, 0)",
+   "rtti": ".?AV?$CombatBehaviorTreeValueNodeT@IV?$CombatBehaviorExpression@V?$CombatBehaviorBinaryExpression@V?$CombatBehaviorMemberFunc@VCombatState@@P81@EBA_NXZ@@V?$CombatBehaviorExpression@V?$CombatBehaviorMemberFunc@VActor@@P81@EBA_NXZ@@@@UOpOr@@@@@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 213967,
+    "1.5.97": 266899
+   },
+   "slots": [
+    "0x0A"
+   ],
+   "source": "native/core/MoveOrder.cpp (child 2 of the Movement Selector: V2)",
+   "doc": "MFO Docs/research/2026-11/hm1-seat-brief.md 3.2; agentlog harbinger/hm1-pa.md"
+  },
+  {
+   "seat": "MoveOrder.Link.Hide.vtable",
+   "kind": "vtable",
+   "construct": "REL::VariantID(266656, 213655, 0)",
+   "rtti": ".?AV?$CombatBehaviorTreeValueNodeT@IV?$CombatBehaviorExpression@V?$CombatBehaviorMemberFunc@VCombatState@@P81@EBA_NXZ@@@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 213655,
+    "1.5.97": 266656
+   },
+   "slots": [
+    "0x0A"
+   ],
+   "source": "native/core/MoveOrder.cpp (child 3 of the Movement Selector: V3)",
+   "doc": "MFO Docs/research/2026-11/hm1-seat-brief.md 3.2; agentlog harbinger/hm1-pa.md"
+  },
+  {
+   "seat": "MoveOrder.Link.Return.vtable",
+   "kind": "vtable",
+   "construct": "REL::VariantID(266900, 213969, 0)",
+   "rtti": ".?AV?$CombatBehaviorTreeValueNodeT@IV?$CombatBehaviorExpression@V?$CombatBehaviorUnaryExpression@V?$CombatBehaviorMemberFunc1@VCombatController@@P81@EBA_NPEAVActor@@@ZVCombatBehaviorAttacker@CombatBehaviorTree@@@@UOpNot@@@@@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 213969,
+    "1.5.97": 266900
+   },
+   "slots": [
+    "0x0A"
+   ],
+   "source": "native/core/MoveOrder.cpp (child 4 of the Movement Selector: V4)",
+   "doc": "MFO Docs/research/2026-11/hm1-seat-brief.md 3.2; agentlog harbinger/hm1-pa.md"
+  },
+  {
+   "seat": "MoveOrder.Link.Flight.vtable",
+   "kind": "vtable",
+   "construct": "REL::VariantID(266898, 213965, 0)",
+   "rtti": ".?AV?$CombatBehaviorTreeValueNodeT@IV?$CombatBehaviorExpression@V?$CombatBehaviorBinaryExpression@V?$CombatBehaviorMemberFunc@VActor@@P81@EAA_NXZ@@V?$CombatBehaviorExpression@V?$CombatBehaviorBinaryExpression@V?$CombatBehaviorMemberFunc@VActor@@P8ActorState@@EBA?AW4FLY_STATE@@XZ@@W4FLY_STATE@@UOpNotEquals@@@@@@UOpOr@@@@@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 213965,
+    "1.5.97": 266898
+   },
+   "slots": [],
+   "source": "native/core/MoveOrder.cpp (child 1 of the Movement Selector: identity)",
+   "doc": "MFO Docs/research/2026-11/hm1-seat-brief.md 3.2; agentlog harbinger/hm1-pa.md"
+  },
+  {
+   "seat": "MoveOrder.Link.ExitWater.vtable",
+   "kind": "vtable",
+   "construct": "REL::VariantID(266901, 213971, 0)",
+   "rtti": ".?AV?$CombatBehaviorTreeValueNodeT@IV?$CombatBehaviorExpression@V?$CombatBehaviorBinaryExpression@V?$CombatBehaviorMemberFunc@VActor@@P81@EBA_NXZ@@V?$CombatBehaviorExpression@V?$CombatBehaviorUnaryExpression@V?$CombatBehaviorMemberFunc@VActor@@P81@EAA_NXZ@@UOpNot@@@@@@UOpAnd@@@@@@@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 213971,
+    "1.5.97": 266901
+   },
+   "slots": [],
+   "source": "native/core/MoveOrder.cpp (child 5 of the Movement Selector: identity)",
+   "doc": "MFO Docs/research/2026-11/hm1-seat-brief.md 3.2; agentlog harbinger/hm1-pa.md"
+  },
+  {
+   "seat": "MoveOrder.LinkNode.vtable",
+   "kind": "vtable",
+   "construct": "RE::VTABLE_CombatBehaviorTreeLinkNode[0]",
+   "rtti": ".?AVCombatBehaviorTreeLinkNode@@",
+   "col_offset": 0,
+   "ids": {
+    "1.6.1170": 212176,
+    "1.5.97": 265758
+   },
+   "slots": [],
+   "source": "native/core/MoveOrder.cpp (identity only: what the Return link's +0x28 points at; its +0x28 is the tree name)",
+   "doc": "agentlog harbinger/hm1-pa.md; builder AE 0x8AD8E5 -> 0x85EEC0, act AE 0x860610 / SE 0x7C9130 / 1.7.104 0x875840"
   }
  ],
  "layout_facts": [
@@ -5987,6 +6094,13 @@
    "where": "core/CombatStyle.cpp (Install ProveSite, ExtraGetThunk, UpdateGetThunk, EngineRefresh)",
    "verified_by": "rows CombatStyle.* + the code's lead / tail byte windows and E8 target checks (Install): B AE 0x6B558D / SE 0x623E6D / 1.7.104 0x6C800D (lead `40 53 48 83 EC 20 48 8B D9 48 83 C1 70`, tail `48 85 C0 75 31`); A AE 0x559C40 / SE 0x4FE63A / 1.7.104 0x561AB0 (lead `48 89 4C 24 30`, tail `48 89 47 38 48 85 F6`); the windows are byte-identical on the three builds (dumped 2026-11-11)",
    "gate": "INI [CombatStyle] bCombatStyle (default 1); VR refused; exact runtime; three address rows + the two seat sites' bytes re-read before the write (both install or neither); a slot is answered only while its claim is ranked above the Engine source on CombatAction"
+  },
+  {
+   "what": "MoveOrder reads: the Movement Selector node, its child links, their nodes, the standard combat area",
+   "value": "selector node +0x08 name (BSFixedString), +0x18 child array, +0x20 child count (u32 10); link +0x28 child node, slot 0x0A value (u32, this only); Idle<float> +0x28 = 10000.0f; CombatBehaviorTreeLinkNode +0x28 tree name (BSFixedString \"ReturnToCombatArea\"); thread +0x158 owner, owner +0x20 CombatController; area +0x2C active, +0x2D enabled, +0x30 centre, +0x48 radius; act / update / link-forward head bytes compared at install",
+   "where": "core/MoveOrder.cpp; channels/CombatApproach.cpp (AreaCarries)",
+   "verified_by": "agentlog harbinger/hm1-pa.md 2026-11-24, 1.6.1170 / 1.5.97 / 1.7.104: pick 0x85AEE0 / 0x7C4080 / 0x870110 (+0x18, +0x20, vfunc +0x50); builder 0x8AD390 / 0x8166E0 / 0x8C2900 (link +0x28, 0x461C4000 at Idle +0x28: 0x8ADCC0 / 0x816A73 / 0x8C3230; LinkNode 0x85EEC0); heads 0x89AD90 / 0x804D80 / 0x8B0230 and 0x89D1F0 / 0x806810 / 0x8B2690; link forward 0x8603B0 / 0x7C8F20 / 0x8755E0",
+   "gate": "[MoveOrder] bStrictOrders; VR refused; exact runtime; every row and byte guard or nothing is written; the node is identified structurally at run time"
   }
  ],
  "raw_rvas": [

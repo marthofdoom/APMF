@@ -865,6 +865,14 @@ The header: `kCastFlag_CorpseTarget` (bit 16 of `CastFlags`) and `kABIVersion` 4
 
 **Refused:** the seat not installed (VR, a build that is not exactly 1.6.1170, 1.5.97 or 1.7.104, `[CastSeats] EnableReanimateSeat=0`), `target` 0 or the actor, `kCastFlag_DenyHandOnly`. On a spell with no Reanimate effect the bit does nothing. An APMF older than v42 ignores the bit and the engine picks its own corpse. Full reference: [FACETS.md Corpse target](FACETS.md#corpse-target-kcastflag_corpsetarget).
 
+## ABI v48 strict movement order (ch.24, `kApproach_Strict`)
+
+File `kIntent_CombatApproach` with `ival = kApproach_Strict | kApproach_Point | kApproach_Hold`, `pos` = the point, `fval` = the leash radius (24 or more), `target` 0. Gate on `abiVersion >= 48` and `APMF_ServeInfo::moveCaps & kMoveCaps_Strict`. While he fights he goes to the point, stands there and fights from it. Past the leash he is walked back. He may attack, so a lunge can carry him off and back. Flee and Hide are refused. Flight, leaving water, essential down, a higher-priority combat area and a ch.23 leash pass. `GetCombatApproachState` maps Travelling / Returning to Approaching and Standing to Holding. `GetMoveOrderState(actor, &info)` (any thread) gives the phase, the distance, the arrived / displaced counters and `gen`.
+
+`SetMoveOrder(claim, &order)` (main thread) changes the order in place. Results: `MoveOrderResult`. The first build serves the implicit Stand order only and answers `kMoveOrder_ModeNotServed` for every valid order. `kMovePhase_Blocked`, `kMovePhase_Unreachable`, `blockedCount`, `displacedBlocks` and `stopError` come with the next piece: until then a failed return path ends the claim as `kApproachState_EngineDropped`.
+
+Refused at the call (`kInvalidHandle`, `CanServe` says why): not served (`[MoveOrder] bStrictOrders=0`, an unverified runtime, a failed seat check), Strict without Point and Hold, `fval` below 24, a substrate holder, 64 live orders.
+
 ## ABI v47 fire once: a claim that casts at most once (ch.8b)
 
 `kCastFlag_FireOnce` on `RequestCast`. Gate on `abiVersion >= 47` and `castSeats & kCastSeat_FireOnce` (plus the spell's own row bit). 0x06 answers NO while an effect of the claim's driven form (the delivery proxy when one was minted) is on the target, while either hand casts the driven form, and for good after the claim's cast fired. `GetClaimEndReason` reads `kClaimEnd_Fired` from the fire on, while the claim still stands. `Repoint` no longer renews a fired claim. Refused: `RequestEx`, `kCastFlag_DenyHandOnly`, `[CastSeats] EnableFireOnce=0` or seats not installed. Full reference: [FACETS.md Fire once](FACETS.md#fire-once-kcastflag_fireonce).

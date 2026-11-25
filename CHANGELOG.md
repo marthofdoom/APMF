@@ -1,3 +1,11 @@
+## Unreleased -- Strict movement order: stand on that spot (ABI v48)
+
+- **A mod can tell a fighter to stand on a point and he stands there.** With the new `kApproach_Strict` flag on a combat approach claim, Harbinger answers the game's own movement question for that fighter: go to the point, or stand. He keeps attacking, casting, shooting and blocking as in any fight. A lunge may carry him off the point, and he walks back at once. He does not flee or hide while the order stands.
+- **Some things still win.** Flying, leaving water, essential down, a package that holds him in place, and a leash.
+- **This is the first piece: stand only.** The calls to change an order in place (`SetMoveOrder`) and read it (`GetMoveOrderState`) are in the header. Reading works, changing answers "not served yet".
+- **New switch** `[MoveOrder] bStrictOrders` (1). Off, or on a game build it was not checked on, such claims are refused and nothing is installed. Mods built on v33 to v47 keep working.
+- **Not field run yet.** Built from the disassembly of 1.6.1170, 1.5.97 and 1.7.104.
+
 ## Unreleased -- Movement probes (passive, off by default)
 
 - **Two new test switches under `[Probe]`, both off.** `bMoveProbe` logs why a follower told to hold a spot in a fight is not on it: what moved him, why the game dropped its path back, and what held his aim. `bRowVerdict` logs the game's own answer for a claimed spell on the spell kinds Harbinger does not answer for. Neither changes anything in the game. No ABI change.

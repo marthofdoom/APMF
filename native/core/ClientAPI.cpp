@@ -20,6 +20,7 @@
 #include "core/ProjectileAim.h"       // ABI v36 GetProjectileAimState (ch.29)
 #include "core/PotionAllowance.h"     // ABI v37 SetPotionAllowance / GetPotionAllowanceState (ch.30)
 #include "core/CombatMove.h"          // ABI v38 kIntent_CombatMove (a one-shot, never a claim) + GetCombatMoveState
+#include "core/MoveOrder.h"           // ABI v48 SetMoveOrder / GetMoveOrderState (ch.24 strict order)
 #include "core/CastSeats.h"           // ABI v46 CastSeatCoverage: the seated caster rows
 #include "core/CastClassify.h"        // ABI v46: SkillGateInstalled
 #include "core/EquipGate.h"           // ABI v46: RowEquipAdmissionArmed
@@ -434,6 +435,23 @@ namespace {
         }
     }
 
+    // ABI v48: the strict movement order (core/MoveOrder.cpp). SetMoveOrder: main thread only (it answers WrongThread).
+    // GetMoveOrderState: any thread, seqlock read. A throw becomes NotInstalled / None.
+    std::uint32_t APMF_SetMoveOrder(APMF_API::Handle claim, const APMF_API::APMF_MoveOrder* order) {
+        try {
+            return apmf::moveorder::SetOrder(claim, order);
+        } catch (...) {
+            return APMF_API::kMoveOrder_NotInstalled;
+        }
+    }
+    std::uint32_t APMF_GetMoveOrderState(RE::FormID actor, APMF_API::APMF_MoveOrderInfo* out) {
+        try {
+            return apmf::moveorder::GetState(actor, out);
+        } catch (...) {
+            return APMF_API::kMovePhase_None;
+        }
+    }
+
     // ABI v35: the claim DRY RUN (APMF_API_v35 CanServe). The real call's own enqueue function runs in CHECK mode
     // (apmf::ServeCheck, core/ControlMap.h): RequestEx / Request -> EnqueueRequest (kIntent_Place -> place::Enqueue,
     // the same diversion RequestEx makes), RequestCast -> EnqueueCast. Nothing is filed, attributed, posted or
@@ -492,6 +510,7 @@ namespace {
                              (apmf::equipgate::RowEquipAdmissionArmed() && (rows & hostile) != 0 ? APMF_API::kCastSeat_TypeEquip : 0u) |
                              (apmf::castclassify::SkillGateInstalled() ? APMF_API::kCastSeat_SkillGate : 0u) |
                              (apmf::castseats::FireOnceArmed() ? APMF_API::kCastSeat_FireOnce : 0u);   // ABI v47
+            info.moveCaps = apmf::moveorder::Caps();   // ABI v48
             if (verdict == APMF_API::kServe_Refused && chk.why) {
                 std::size_t n = 0;
                 for (; n + 1 < sizeof(info.why) && chk.why[n] != '\0'; ++n) info.why[n] = chk.why[n];
@@ -568,6 +587,7 @@ namespace {
         case 45: return "0.20.0";   // ch.33 combat style: the same release (confirm at the cut)
         case 46: return "the release after 0.20.5";   // cast seat coverage (name it at the cut)
         case 47: return "the release after 0.20.5";   // ch.8b kCastFlag_FireOnce: the same release (confirm at the cut)
+        case 48: return "the release after 0.20.5";   // ch.24 strict movement order: the same release (confirm at the cut)
         default: return "a release newer than this one";
         }
     }
@@ -725,7 +745,17 @@ namespace {
     static_assert(sizeof(APMF_API::APMF_API_v38) == sizeof(APMF_API::APMF_API_v37) + sizeof(void*),
                   "APMF_API_v38 = the v37 prefix plus exactly one function pointer");
 
-    constexpr APMF_API::APMF_API_v38 g_api{
+    // ABI v48 (ch.24 strict movement order) appends TWO slots to the v38 prefix (v39..v47 added none), so the object is
+    // now an APMF_API_v48 and `abiVersion` reports 48. Same two-form proof.
+    static_assert(offsetof(APMF_API::APMF_API_v48, SetMoveOrder) == sizeof(APMF_API::APMF_API_v38),
+                  "APMF_API_v48's first slot must start right after the v38 prefix");
+    static_assert(offsetof(APMF_API::APMF_API_v48, GetMoveOrderState) == sizeof(APMF_API::APMF_API_v38) + sizeof(void*),
+                  "APMF_API_v48's second slot follows the first");
+    static_assert(sizeof(APMF_API::APMF_API_v48) == sizeof(APMF_API::APMF_API_v38) + 2 * sizeof(void*),
+                  "APMF_API_v48 = the v38 prefix plus exactly two function pointers");
+
+    constexpr APMF_API::APMF_API_v48 g_api{
+        {
         {
         {
         {
@@ -806,6 +836,9 @@ namespace {
         &APMF_GetPotionAllowanceState,
         },
         &APMF_GetCombatMoveState,
+        },
+        &APMF_SetMoveOrder,
+        &APMF_GetMoveOrderState,
     };
 
 }

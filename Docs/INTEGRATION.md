@@ -266,6 +266,7 @@ A client built against an older header keeps working. Each item below needs its 
 | 44 | 0.20.0 | `kCombatMove_PowerAttack` (ch.31): one right-hand power attack started by the game's own action road, so the hit carries the power attack's damage and stamina cost. No struct, no slot | `abiVersion >= 44`. An older APMF refuses the value at the call |
 | 45 | 0.20.0 | `kIntent_CombatStyle` (ch.33): the actor fights by a combat style the mod names, actor-wide or for the equipment choice only (`kCombatStyle_EquipChoiceOnly`), through the existing `RequestEx` and `Repoint` (no struct, no slot) | `abiVersion >= 45`. An older APMF refuses the intent |
 | 47 | the release after 0.20.5 | `kCastFlag_FireOnce` (ch.8b): the claim casts at most once on any caster type. `kCastSeat_FireOnce`, `kClaimEnd_Fired`. No struct, no slot | `abiVersion >= 47` and `castSeats & kCastSeat_FireOnce`. An older APMF ignores the bit and the claim repeats |
+| 48 | the release after 0.20.5 | ch.24 strict movement order: `kApproach_Strict`, `SetMoveOrder`, `GetMoveOrderState`, `moveCaps`, `kApproachState_Unreachable` ([reference](APMF_API-REFERENCE.md#abi-v48-strict-movement-order-ch24-kapproach_strict)) | `abiVersion >= 48` and `moveCaps & kMoveCaps_Strict`. An older APMF ignores the bit: do not file |
 
 ### Place (ABI 28)
 

@@ -124,10 +124,9 @@ namespace apmf::moveprobe {
         }
 
         RE::NiPointer<RE::Actor> ActorOf(void* a_thread) {
-            auto* owner = reinterpret_cast<apmf::cbt::TreeControl*>(a_thread)->master_controller;
-            if (!owner) return nullptr;
-            auto* ctrl = At<void*>(owner, 0x20);
-            return ctrl ? reinterpret_cast<apmf::cbt::ControllerMini*>(ctrl)->attackerHandle.get() : nullptr;
+            RE::NiPointer<RE::Actor> a;
+            apmf::cbt::ResolveController(a_thread, a);
+            return a;
         }
 
         // ---- P2: the Return To Combat Area leaf's update (slot 0x04). OBSERVE-ONLY, chains always. ----

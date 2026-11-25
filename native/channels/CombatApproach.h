@@ -59,6 +59,21 @@ namespace apmf::combatapproach {
         bool          clientWins   = false;  // a live ch.24 claim is carried instead
     };
     bool GetInternalInfo(RE::FormID actor, InternalInfo& out);   // GAME THREAD; false = none set
+    // ---- strict movement orders (ABI v48, core/MoveOrder.cpp) ----
+    // The world-tick clock (ms of unpaused game time; advanced by Poll). Any thread.
+    std::uint64_t WorldMs();
+    // Does `ctl`'s current combat area carry exactly this target? The actor's OWN combat thread only.
+    enum class Carry : std::uint8_t {
+        kCarried,    // the standard area is current, active, enabled, and its centre and radius are bit-equal
+        kOutranked,  // a higher-priority area (not the standard one) is current
+        kNot,
+    };
+    Carry CarryOf(RE::CombatController* a_ctl, const float* a_pos, float a_radius);
+    // The live claim `h` (from its first sweep on): its flags and R. Any thread (shared lock).
+    bool FindClaim(APMF_API::Handle a_h, std::uint32_t& a_flags, float& a_radius);
+    // Why a kApproach_Strict declaration cannot be served now, or nullptr. Any thread. (`a_code`: a ServeRefusal)
+    const char* StrictRefusal(RE::FormID a_actor, std::uint32_t a_flags, float a_radius, std::uint32_t& a_code);
+
     // The engine's own "space" of a reference (AE 0x2EA5E0 GetWorldLocation's rule): an interior cell,
     // else the worldspace (or the cell). nullptr = no parent cell. Any thread (reads pointers only).
     const void* SpaceOfRef(const RE::TESObjectREFR* ref);

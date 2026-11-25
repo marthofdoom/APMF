@@ -434,6 +434,12 @@ namespace apmf {
                 why     = "the actor is the player (the combat approach is for NPCs)";
                 whyCode = APMF_API::kServeRefusal_Player;
             }
+            if (!why && param && (static_cast<std::uint32_t>(param->ival) & APMF_API::kApproach_Strict) != 0) {   // ABI v48
+                if (apmf::combatsubstrate::Suppressing(actor))
+                    why = "kApproach_Strict on a combat substrate holder (his movement is held)";
+                else
+                    why = apmf::combatapproach::StrictRefusal(actor, static_cast<std::uint32_t>(param->ival), param->fval, whyCode);
+            }
             if (why) {
                 if (dry) return DryRefuse(dry, whyCode, why);
                 spdlog::warn("[apmf][combat-approach] claim refused -- actor 0x{}: {}.", apmf::log::Hex(actor), why);

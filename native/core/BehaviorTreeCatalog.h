@@ -110,6 +110,63 @@ namespace apmf::cbt {
     static_assert(offsetof(ControllerMini, attackerHandle) == 0x28);
     static_assert(offsetof(ControllerMini, targetHandle) == 0x2C);
 
+    // ---- who is deliberating ----
+    // Resolve the deliberating actor from a node's `control` argument -- BOTH
+    // +0x158 hypotheses, exactly the guard T1Probe field-proved (core/ActionGate.cpp's file header
+    // has the history). The ONE reader: core/ActionGate.cpp, core/MoveProbe.cpp, core/MoveOrder.cpp (moved here
+    // 2026-11-24 from ActionGate's anonymous namespace, code unchanged).
+    // ORDER AND TYPE (field crash 2026-10-30, LoreRim 1.6.1170): hypothesis B, the +0x20 hop to the real
+    // CombatController, is the engine's own read (every leaf: `mov rax,[thread+0x158]; mov rcx,[rax+0x20]`,
+    // Docs/BEHAVIOR-TREE-CATALOG.md) and the one field-proved on this runtime, so it is tried FIRST.
+    // Hypothesis A reads +0x28 of the CombatBehaviorController, which is not a CombatController, and is kept
+    // only as the fallback. The handle lookup (id 12204 / 12332) is untyped, so A once named a TREE
+    // reference: tried first, a non-actor there shadowed B and the deliberating actor was lost for that act.
+    // A hypothesis now counts only when it names an Actor (TESForm::formType +0x1A == ActorCharacter 0x3E,
+    // the engine's own test). For a real deliberating actor named by B the answer is unchanged.
+    inline bool IsActorRef(const RE::NiPointer<RE::Actor>& a_ref) {
+        return a_ref && a_ref->GetFormType() == RE::FormType::ActorCharacter;
+    }
+
+    inline RE::FormID ResolveDeliberatingActor(void* a_control) {
+        if (!a_control) return 0;
+        auto* tc      = reinterpret_cast<TreeControl*>(a_control);
+        void* p0x158 = tc->master_controller;
+        if (!p0x158) return 0;
+        void* cbcPlus20 = *reinterpret_cast<void**>(reinterpret_cast<std::uintptr_t>(p0x158) + 0x20);
+        if (cbcPlus20) {
+            auto* ctrlB = reinterpret_cast<ControllerMini*>(cbcPlus20);
+            if (auto b = ctrlB->attackerHandle.get(); IsActorRef(b)) return b->GetFormID();
+        }
+        auto* ctrlA = reinterpret_cast<ControllerMini*>(p0x158);
+        if (auto a = ctrlA->attackerHandle.get(); IsActorRef(a)) return a->GetFormID();
+        return 0;
+    }
+
+    // ch.23 PURSUIT LEASH: the same two +0x158 hypotheses as ResolveDeliberatingActor, in the
+    // same order (B first) with the same Actor test, but returning the controller that named the actor too -- the combat
+    // target is read from THAT controller (targetHandle, +0x2C), never from a guess.
+    inline ControllerMini* ResolveController(void* a_control, RE::NiPointer<RE::Actor>& a_actor) {
+        a_actor.reset();
+        if (!a_control) return nullptr;
+        auto* tc     = reinterpret_cast<TreeControl*>(a_control);
+        void* p0x158 = tc->master_controller;
+        if (!p0x158) return nullptr;
+        void* cbcPlus20 = *reinterpret_cast<void**>(reinterpret_cast<std::uintptr_t>(p0x158) + 0x20);
+        if (cbcPlus20) {
+            auto* ctrlB = reinterpret_cast<ControllerMini*>(cbcPlus20);
+            if (auto b = ctrlB->attackerHandle.get(); IsActorRef(b)) {
+                a_actor = b;
+                return ctrlB;
+            }
+        }
+        auto* ctrlA = reinterpret_cast<ControllerMini*>(p0x158);
+        if (auto a = ctrlA->attackerHandle.get(); IsActorRef(a)) {
+            a_actor = a;
+            return ctrlA;
+        }
+        return nullptr;
+    }
+
     // ---- the CombatGroup's search fields ----
     // +0xFC  the actor the group is searching for, as a handle: the group's setter writes it (AE id 44767
     //        0x809B20 `mov [rcx+0xFC],eax`; SE id 43541 0x76FEB0; 1.7.104 0x81EA00, the AE byte signature with
