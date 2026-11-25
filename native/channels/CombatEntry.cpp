@@ -10,7 +10,9 @@
 #include "core/CombatOps.h"     // H1: the ranked StopCombat is posted to the engine's task queue
 #include "core/ControlMap.h"
 #include "core/Hook.h"          // P0: the overlap sample at StartCombat
+#include "core/HoldActivity.h"   // the watchdog: what counts as fighting
 #include "core/Log.h"
+#include "core/MoveOrder.h"      // PhaseOf: the watchdogs stand still while a strict order is live
 #include "core/MainThread.h"
 #include "core/Registry.h"
 #include "core/Sources.h"         // the held engagement: census of its two call-site seats
@@ -1062,7 +1064,8 @@ namespace {
             float           moved = 0.0f, windowStartDist = -1.0f;
             std::uint32_t   attacks = 0, casts = 0;   // on the HELD target, this window
             std::uint32_t   elsewhereActs = 0;        // attacks / casts on another target while paused (R-3)
-            bool            wasAttacking = false, wasCasting = false;
+            apmf::holdlogic::Activity activity{};
+            bool            strictOrder = false;    // a strict ch.24 order is live on the actor
             bool            targetFlying = false;   // the no-path-progress end is suspended while the target flies
             std::uint32_t   lostBase = 0, locBase = 0, leashBase = 0;
             Drive           drive = Drive::kNone;
@@ -1070,10 +1073,27 @@ namespace {
         };
         std::unordered_map<RE::FormID, Track> g_tracks;
 
-        bool IsCasting(RE::Actor* a) {
-            for (auto* c : a->GetActorRuntimeData().magicCasters)
-                if (c && c->state.get() != RE::MagicCaster::State::kNone) return true;
-            return false;
+        // What core/HoldActivity.h reads (an attack data pointer is an identity only).
+        static_assert(apmf::holdlogic::kAtkDraw == static_cast<std::uint32_t>(RE::ATTACK_STATE_ENUM::kDraw) &&
+                      apmf::holdlogic::kAtkFollowThrough == static_cast<std::uint32_t>(RE::ATTACK_STATE_ENUM::kFollowThrough) &&
+                      apmf::holdlogic::kAtkBash == static_cast<std::uint32_t>(RE::ATTACK_STATE_ENUM::kBash) &&
+                      apmf::holdlogic::kBowDraw == static_cast<std::uint32_t>(RE::ATTACK_STATE_ENUM::kBowDraw) &&
+                      apmf::holdlogic::kBowDrawn == static_cast<std::uint32_t>(RE::ATTACK_STATE_ENUM::kBowDrawn) &&
+                      apmf::holdlogic::kBowReleasing == static_cast<std::uint32_t>(RE::ATTACK_STATE_ENUM::kBowReleasing) &&
+                      apmf::holdlogic::kBowFollowThrough == static_cast<std::uint32_t>(RE::ATTACK_STATE_ENUM::kBowFollowThrough) &&
+                      apmf::holdlogic::kFire == static_cast<std::uint32_t>(RE::ATTACK_STATE_ENUM::kFire) &&
+                      apmf::holdlogic::kFired == static_cast<std::uint32_t>(RE::ATTACK_STATE_ENUM::kFired));
+        std::uintptr_t AttackEntry(RE::Actor* a) {
+            auto* proc = a->GetActorRuntimeData().currentProcess;
+            return proc && proc->high ? reinterpret_cast<std::uintptr_t>(proc->high->attackData.get()) : 0;
+        }
+        std::uint32_t CasterStates(RE::Actor* a) {
+            std::uint32_t v = 0, i = 0;
+            for (auto* c : a->GetActorRuntimeData().magicCasters) {
+                if (c && i < 8) v |= (static_cast<std::uint32_t>(c->state.get()) & 0xF) << (i * 4);
+                ++i;
+            }
+            return v;
         }
 
         const char* LifeName(RE::ACTOR_LIFE_STATE s) {
@@ -1603,18 +1623,27 @@ namespace apmf::combatentry::hold {
             const std::uint32_t curT = actor->GetActorRuntimeData().currentCombatTarget.native_handle();
             const bool onHeld    = curT == t.th.native_handle();
             const bool elsewhere = curT != 0 && !onHeld;
-            const bool attacking = actor->AsActorState()->GetAttackState() != RE::ATTACK_STATE_ENUM::kNone;
-            const bool casting   = IsCasting(actor);
-            const bool started   = (attacking && !t.wasAttacking) || (casting && !t.wasCasting);
-            if (started && onHeld) {
-                if (attacking && !t.wasAttacking) ++t.attacks;
-                if (casting && !t.wasCasting) ++t.casts;
+            const auto atkState  = static_cast<std::uint32_t>(actor->AsActorState()->GetAttackState());
+            // core/HoldActivity.h: a None -> not-None edge alone misses an archer's next arrow and a chain's next swing.
+            const auto seen = t.activity.Step(atkState, AttackEntry(actor), CasterStates(actor));
+            if (seen.Any() && onHeld) {
+                t.attacks += seen.attacks;
+                t.casts += seen.casts;
                 t.lastHeldActMs = wnow;
-            } else if (started && elsewhere) {
+            } else if (seen.Any() && elsewhere) {
                 ++t.elsewhereActs;
                 t.lastHeldActMs = wnow;   // paused by design and fighting: not stuck
             }
-            t.wasAttacking = attacking; t.wasCasting = casting;
+
+            // A STRICT ORDER (ch.24): where he stands is the client's choice, so "no path progress" and "arrived but
+            // idle" mean nothing while it is live. Both windows are held at zero (a FULL window is needed after it).
+            const bool strict = apmf::moveorder::PhaseOf(sn.id) != APMF_API::kMovePhase_None;
+            if (strict != t.strictOrder) {
+                t.strictOrder = strict;
+                spdlog::info("[hold] 0x{} -> 0x{}: strict movement order {}: the no-progress and arrived-idle ends are {}.",
+                             Hex(sn.id), Hex(sn.target), strict ? "live" : "over",
+                             strict ? "suspended" : "back (full windows)");
+            }
 
             // FLYING TARGET (marth 2026-10-18: "once an engagement is called it cannot be lost"): a dragon in
             // the air outruns any ground follower, so "no path progress" means nothing against it. While the
@@ -1632,7 +1661,8 @@ namespace apmf::combatentry::hold {
                                  "window).",
                                  Hex(sn.id), Hex(sn.target), kNoProgressMs / 1000);
             }
-            if (tflying) t.samples.clear();
+            if (tflying || strict) t.samples.clear();
+            if (strict) t.arrivedSinceMs = 0;
             t.samples.push_back({ wnow, dist, tpos, t.path });
             while (t.samples.size() > 1 && t.samples[1].ms + kNoProgressMs <= wnow) t.samples.pop_front();
 

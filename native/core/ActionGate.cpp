@@ -4,6 +4,7 @@
 #include "core/Clock.h"
 #include "core/BehaviorTreeCatalog.h"
 #include "core/ControlMap.h"
+#include "core/MoveSuppress.h"   // the strict order: SuppressAttack at the attack leaves
 #include "core/CastGuard.h"      // ch.25 kCastGuard_Bystanders: HoldWeaponAttack at the attack leaves
 #include "core/CastLeafNature.h" // ch.7 hostile offense (ABI v40): the nature of the spell a cast leaf is about to cast
 #include "core/CombatMove.h"     // ch.31 block hold (ABI v43): BlockHeld at the Offense / Block / BlockAttack leaves
@@ -1314,6 +1315,18 @@ namespace apmf::actiongate {
                         reinterpret_cast<apmf::cbt::Act_t>(ff)(a_this, a_control);
                         return a_control;   // do NOT call orig -- this IS the hold
                     }
+                }
+            }
+
+            // STRICT ORDER (core/MoveSuppress.cpp): no new melee attack while he travels or returns. The same pair; BlockAttack too.
+            if (apmf::moveorder::AnyStrict()) {
+                const auto wit = g_weaponLeaf.find(vt);
+                const std::uint8_t kind = wit != g_weaponLeaf.end() ? wit->second : vt == g_blockAttackVt ? apmf::castguard::kWeaponMelee : 0;
+                const auto ff = g_forceFailAct.load(std::memory_order_relaxed);
+                if (kind != 0 && ff && apmf::moveorder::SuppressAttack(ResolveDeliberatingActor(a_control), kind)) {
+                    t_pending = PendingPop{ a_this, a_control };
+                    reinterpret_cast<apmf::cbt::Act_t>(ff)(a_this, a_control);
+                    return a_control;   // do NOT call orig -- this IS the deny
                 }
             }
 

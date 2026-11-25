@@ -6,6 +6,7 @@
 #include "core/EquipGate.h"
 #include "core/FacetAttribution.h"   // Harbinger 1b: the cast-hand paths ranked on the Cast facet
 #include "core/CastClassify.h"      // ABI v46: SkillAdmitted / SkillGateRefuses (the skill-gate deny)
+#include "core/RowEquipLogic.h"     // the row admission's decision
 #include "core/CastSeats.h"         // ABI v46: EffectAlreadyOn (the row equip admission)
 #include "core/Sources.h"            // RegisterCallSeat: the Light darkness seat in the source census
 
@@ -234,7 +235,18 @@ namespace apmf::equipgate {
         // Undead magnitude is), a Disarm needs a target holding a weapon, and the row's distance (Stagger /
         // Disarm 256, Paralyze 384 by the GMSTs) and cooldown are no longer asked.
         std::unordered_map<std::uintptr_t, std::uint32_t> g_rowItemVts;   // item vtable -> its row's CastSeatCoverage bit; written once at Install
-        std::atomic<bool>                  g_rowEquipOn{ false };
+        // 2026-11-25: WARD and BOUND ITEM (H-F2). Their 0x0F judges the fight, which is the claim's: the ward's threat test on
+        // the foe (AE 0x856200; the engine said NO 753 of 753 times to a claimed ward), the bound weapon's DPS, distance
+        // and area tests (AE 0x821710). Kept: fleeing, already applied (both engine tests ask the CASTER, 0x81E400), afford,
+        // and the ward's magicka floor (AE 0x81ED48, SE 0x782AA0, 1.7.104 0x8341B0: Magicka current / permanent must be ABOVE the GMST below).
+        // Armed apart from the eight above: one of these missing never disarms those.
+        RE::Setting*            g_wardEquipLimit = nullptr;   // fCombatMagicWardMagickaEquipLimit; read by name at Install
+        std::uint32_t RowBit(std::uintptr_t a_vt) {
+            const auto it = g_rowItemVts.find(a_vt);
+            return it != g_rowItemVts.end() ? it->second : 0u;
+        }
+        std::atomic<bool>                  g_rowEquipOn{ false };     // the hostile eight
+        std::atomic<bool>                  g_ownRowEquipOn{ false };  // Ward, Bound Item
         std::atomic<std::uint32_t>         g_rowEquipFlips{ 0 };
         std::atomic<std::uint32_t>         g_skillDenies{ 0 };
         thread_local bool           t_darkArmed   = false;
@@ -871,35 +883,48 @@ namespace apmf::equipgate {
             // Script, Offensive, Reanimate, and Light with its veto override). Logged at each change of the answer, and
             // every 10 s while it stays.
             if (g_rowVerdictProbe.load(std::memory_order_relaxed) && fid != 0 && subjectForm != 0 && hasHandSeat &&
-                !g_rowItemVts.contains(vt)) {
+                (!g_rowItemVts.contains(vt) || rowequip::OwnRow(RowBit(vt)))) {
                 const RE::FormID driven = handSeat.proxy ? handSeat.proxy : handSeat.spell;
                 if (driven != 0 && subjectForm == driven) {
                     std::uint32_t yes = 0, no = 0;
                     if (RowVerdictDue(fid, subjectForm, static_cast<int>(callerHand), vt, engineSays, yes, no)) {
                         const char* cls = ResolveTypeName(vt);
                         spdlog::info("[t2a row verdict] 0x{} CheckShouldEquip item=0x{} '{}' class={} hand={} (the driven form "
-                                     "of the cast claim, claim spell 0x{}{}, target 0x{}): the ENGINE's 0x0F says {}; no "
+                                     "of the cast claim, claim spell 0x{}{}, target 0x{}): the ENGINE's 0x0F says {}; {} "
                                      "admission on this row. Answers so far: YES {} / NO {}; fleeing {}.",
                                      apmf::log::Hex(fid), apmf::log::Hex(subjectForm),
                                      a_this->item && a_this->item->GetName() ? a_this->item->GetName() : "?",
                                      cls ? cls : "<unresolved>",
                                      callerHand == allowance::Hand::kLeft ? "L" : callerHand == allowance::Hand::kRight ? "R" : "?",
                                      apmf::log::Hex(handSeat.spell), handSeat.proxy ? " via delivery-flip proxy" : "",
-                                     apmf::log::Hex(handSeat.target), engineSays ? "YES" : "NO", yes, no,
+                                     apmf::log::Hex(handSeat.target), engineSays ? "YES" : "NO", RowBit(vt) != 0 ? "an" : "no", yes, no,
                                      a_cc && a_cc->state ? (a_cc->IsFleeing() ? "yes" : "no") : "?");
                     }
                 }
             }
             // ROW EQUIP ADMISSION (ABI v46, see g_rowItemVts): the claim's driven form on its own hand.
             if (!engineSays && a_cc && fid != 0 && subjectForm != 0 && hasHandSeat &&
-                g_rowEquipOn.load(std::memory_order_relaxed) && g_rowItemVts.contains(vt) &&
-                (apmf::castseats::CoverageMask() & g_rowItemVts.find(vt)->second) != 0) {   // S1: this row's caster is seated
+                (rowequip::OwnRow(RowBit(vt)) ? g_ownRowEquipOn : g_rowEquipOn).load(std::memory_order_relaxed) &&
+                (apmf::castseats::CoverageMask() & RowBit(vt)) != 0) {   // S1: this row's caster is seated
                 const RE::FormID driven = handSeat.proxy ? handSeat.proxy : handSeat.spell;
                 if (driven != 0 && subjectForm == driven && castWins("the row equip admission")) {
                     const bool  fleeing = a_cc->state && a_cc->IsFleeing();
                     auto        tgtPtr  = handSeat.targetHandle.get();
                     auto*       spell   = a_this->item ? a_this->item->As<RE::MagicItem>() : nullptr;
-                    const bool  applied = !fleeing && spell && apmf::castseats::EffectAlreadyOn(tgtPtr.get(), spell);
+                    const std::uint32_t row = RowBit(vt);
+                    const bool  own     = rowequip::OwnRow(row);
+                    auto        selfPtr = own ? a_cc->attackerHandle.get() : RE::NiPointer<RE::Actor>{};
+                    const bool  onTarget = !fleeing && spell && apmf::castseats::EffectAlreadyOn(tgtPtr.get(), spell);
+                    const bool  onCaster = !fleeing && spell && apmf::castseats::EffectAlreadyOn(selfPtr.get(), spell);
+                    const bool  applied  = onTarget || onCaster;
+                    bool  wardLow = false;   // the ward's own floor, as the engine asks it
+                    float share   = 1.0f;
+                    if (row == APMF_API::kCastSeat_Ward) {
+                        auto* avo = selfPtr ? selfPtr->AsActorValueOwner() : nullptr;
+                        if (avo) share = rowequip::MagickaShare(avo->GetActorValue(RE::ActorValue::kMagicka),
+                                                                avo->GetPermanentActorValue(RE::ActorValue::kMagicka));
+                        wardLow = !avo || rowequip::WardTooLow(share, g_wardEquipLimit->GetFloat());
+                    }
                     // S2: the engine's afford test for a spell item (see the banner). The cost is the item's own.
                     bool  broke = false;
                     float cost = 0.0f, magicka = 0.0f;
@@ -918,7 +943,8 @@ namespace apmf::equipgate {
                         }
                     }
                     const char* cls     = ResolveTypeName(vt);
-                    if (!fleeing && !applied && !broke) {
+                    const auto keep = rowequip::Decide(row, fleeing, onTarget, onCaster, wardLow, broke);
+                    if (keep == rowequip::Keep::kAdmit) {
                         engineSays = true;
                         g_rowEquipFlips.fetch_add(1, std::memory_order_relaxed);
                     }
@@ -931,7 +957,9 @@ namespace apmf::equipgate {
                                      apmf::log::Hex(handSeat.spell), handSeat.proxy ? " via delivery-flip proxy" : "",
                                      apmf::log::Hex(handSeat.target),
                                      fleeing   ? std::string("NO kept: the actor is fleeing")
-                                     : applied ? std::string("NO kept: the spell's effect is already on the claim's target")
+                                     : applied ? std::string(own ? "NO kept: the spell's effect is already on the caster or the claim's target"
+                                                                 : "NO kept: the spell's effect is already on the claim's target")
+                                     : keep == rowequip::Keep::kWardFloor ? fmt::format("NO kept: his Magicka is at {:.0f}% of full, not above the engine's ward floor", share * 100.0f)
                                      : broke   ? fmt::format("NO kept: he cannot afford it (Magicka {:.0f}, the item's cost "
                                                              "{:.0f})", magicka, cost)
                                                : std::string("ADMITTED: WHETHER and AT WHOM are the claim's (not fleeing, "
@@ -1174,19 +1202,42 @@ namespace apmf::equipgate {
                 if (g_orig.contains(vt.address())) g_rowItemVts.emplace(vt.address(), bit);
             }
         }
+        const std::size_t hostileN = g_rowItemVts.size();
+        {   // Ward and Bound Item: all four item vtables and the GMST, or neither row.
+            const std::pair<REL::VariantID, std::uint32_t> ownItems[] = {
+                { RE::VTABLE_CombatInventoryItemMagicT_CombatInventoryItemMagic_CombatMagicCasterWard_[0], APMF_API::kCastSeat_Ward },
+                { RE::VTABLE_CombatInventoryItemMagicT_CombatInventoryItemStaff_CombatMagicCasterWard_[0], APMF_API::kCastSeat_Ward },
+                { RE::VTABLE_CombatInventoryItemMagicT_CombatInventoryItemMagic_CombatMagicCasterBoundItem_[0], APMF_API::kCastSeat_BoundItem },
+                { RE::VTABLE_CombatInventoryItemMagicT_CombatInventoryItemStaff_CombatMagicCasterBoundItem_[0], APMF_API::kCastSeat_BoundItem },
+            };
+            if (auto* gsc = RE::GameSettingCollection::GetSingleton()) g_wardEquipLimit = gsc->GetSetting("fCombatMagicWardMagickaEquipLimit");
+            bool all = g_wardEquipLimit != nullptr;
+            for (const auto& [id, bit] : ownItems) all = all && g_orig.contains(REL::Relocation<std::uintptr_t>{ id }.address());
+            if (all)
+                for (const auto& [id, bit] : ownItems) g_rowItemVts.emplace(REL::Relocation<std::uintptr_t>{ id }.address(), bit);
+            const bool on = all && GetPrivateProfileIntA("CastSeats", "EnableRowEquipAdmission", 1, "Data/SKSE/Plugins/APMF.ini") != 0;
+            g_ownRowEquipOn.store(on, std::memory_order_release);
+            if (!all)
+                spdlog::error("[t2a row equip] Ward / Bound Item NOT armed: {}. The engine's own row condition decides there.",
+                              g_wardEquipLimit ? "an item vtable does not carry the 0x0F seat" : "GMST fCombatMagicWardMagickaEquipLimit not found");
+            else
+                spdlog::info("[t2a row equip] Ward / Bound Item {}: a claim's driven form on its own hand passes the engine's own "
+                             "opinion of the fight; fleeing, already applied, afford and the ward's magicka floor ({:.2f}) stay.",
+                             on ? "armed" : "disabled by [CastSeats] EnableRowEquipAdmission=0", g_wardEquipLimit->GetFloat());
+        }
         g_rowVerdictProbe.store(GetPrivateProfileIntA("Probe", "bRowVerdict", 0, "Data/SKSE/Plugins/APMF.ini") != 0,
                                 std::memory_order_relaxed);
         spdlog::info("[t2a row verdict] probe {} ([Probe] bRowVerdict): the engine's 0x0F answer for a claim's driven form on "
                      "a row without an admission.", g_rowVerdictProbe.load(std::memory_order_relaxed) ? "ON" : "off");
         const bool rowOn = GetPrivateProfileIntA("CastSeats", "EnableRowEquipAdmission", 1, "Data/SKSE/Plugins/APMF.ini") != 0;
-        g_rowEquipOn.store(rowOn && g_rowItemVts.size() == 8, std::memory_order_release);
+        g_rowEquipOn.store(rowOn && hostileN == 8, std::memory_order_release);
         if (!rowOn)
             spdlog::info("[t2a row equip] disabled by [CastSeats] EnableRowEquipAdmission=0 -- a claimed Stagger / Disarm / "
                          "TargetEffect / Paralyze spell is equipped only when the engine's own row condition allows it.");
-        else if (g_rowItemVts.size() != 8)
+        else if (hostileN != 8)
             spdlog::error("[t2a row equip] NOT armed: only {} of the 8 Stagger / Disarm / TargetEffect / Paralyze item "
                           "vtables (spell and staff) carry the 0x0F seat. The engine's own row condition decides.",
-                          g_rowItemVts.size());
+                          hostileN);
         else
             spdlog::info("[t2a row equip] armed on the 8 Stagger / Disarm / TargetEffect / Paralyze item vtables (spell and "
                          "staff): a live cast claim's driven form on its own hand is admitted when the engine's row "
