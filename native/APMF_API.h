@@ -837,8 +837,9 @@ namespace APMF_API {
                                             //   own last test in the call that lands the blast, channel ticks):
                                             //   REFUSED unless a <= 250 ms reading says clear; the engine's own
                                             //   interrupt then ends the cast. The cast claim stands and may start
-                                            //   again until its TTL or Release (kClaimEnd_* as for any claim): do not
-                                            //   Repoint it for ever. Independent of kCastGuard_Bystanders.
+                                            //   again until its TTL or Release: do not Repoint it for ever. Lapsed
+                                            //   unfired, IsClaimLive reads false and GetClaimEndReason does not read
+                                            //   kClaimEnd_Fired. Independent of kCastGuard_Bystanders.
                                             //   DETECT: an APMF without the bit REFUSES the claim, and drops a Repoint.
                                             //   Ask CanServe (v35) with the bits once, or drop them on a refusal.
                                             //   abiVersion does not tell.

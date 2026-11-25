@@ -5,3 +5,4 @@
 - `weapon_enchant/weapon_enchant_test.cpp` is the host test of `native/core/WeaponEnchant.h` (a weapon hit's enchantment against the ch.8 gate). Build line in the file.
 - `move_order/move_order_test.cpp` is the host test of the strict movement order's decision core (`native/core/MoveOrderLogic.h`, ABI v48). Build line in the file.
 - `fire_once/fire_once_test.cpp` is the host test of the ch.8b fire-once ledger (`native/core/FireOnce.h`, ABI v47). Build line in the file.
+- `self_blast/self_blast_test.cpp` is the host test of the ch.25 self blast party hold (`native/core/SelfBlast.h`). Build line in the file.
