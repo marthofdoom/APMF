@@ -1201,6 +1201,8 @@ For comparison, the Offensive row's equip test is only "not fleeing". The engine
 
 After a claim on a spell that needed the skill gate ends, the next equip pass refuses the leftover item, and keeps refusing it for the rest of the fight (the engine's rebuild keeps the item of every spell the follower still knows).
 
+**Ward and Bound Item (2026-11-25, no ABI change).** The same admission covers the claim's driven form on these two rows: the engine's threat, weapon damage, distance and area tests are no longer asked. Still the engine's: fleeing, the effect already on the caster, afford (a spell), and for a ward Magicka above `fCombatMagicWardMagickaEquipLimit` of full. `kCastSeat_TypeEquip` still speaks of the four hostile rows only.
+
 Ask `CanServe` and read `APMF_ServeInfo::castSeats` (`CastSeatCoverage`, only when `abiVersion >= 46`) to learn which rows this install covers. Switches: `[CastSeats] EnableHostileRowSeats`, `EnableRowEquipAdmission`, `EnableSkillGateSeat`.
 
 Log lines: `[ch.8b] ... cast-execution CLAIMED ... Engine item tests: ...` (which item test the spell fails natively), `[ch.8b skill gate] ... ADMITTED`, `[t2a row equip] ... ADMITTED` or `NO kept`, `[t2a skill gate] ... -> NO` (an admitted item with no claim), `[ch.8b seats] FIRST claim answer on the <row> caster`.

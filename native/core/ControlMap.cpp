@@ -1,5 +1,6 @@
 #include "PCH.h"
 #include "core/Log.h"
+#include "core/LogDedupe.h"
 #include "core/ControlMap.h"
 #include "core/EquipSink.h"
 #include "core/Registry.h"
@@ -1806,6 +1807,8 @@ namespace apmf {
                 effParam.form = self->param.form;
             }
 
+            // ch.25: a heartbeat that changes nothing writes no line (3700 of them in 4.5 minutes, 2026-11-25).
+            const bool same = channel->ChannelNo() == 25 && apmf::logdedupe::SameParam(self->param, effParam);
             self->param = effParam;   // update the stored param regardless of ownership
 
             // ---- TTL RENEWAL (2026-09-06 diagnosis RC2, CLAUDE.md principle 9) ----
@@ -1851,7 +1854,7 @@ namespace apmf {
                 // reach the channel and the log would report a form the claim does
                 // not hold.
                 channel->OnOwnerChanged(formID, actor, effParam);
-                spdlog::info("[ctl] 0x{} ~ ch.{} {} REPOINT (h={}, form=0x{}, TTL renewed +{} ms "
+                if (!same) spdlog::info("[ctl] 0x{} ~ ch.{} {} REPOINT (h={}, form=0x{}, TTL renewed +{} ms "
                              "[0 = no TTL on this claim, its window had already lapsed, or a fire-once claim already fired]).",
                              apmf::log::Hex(formID), channel->ChannelNo(), channel->Name(),
                              handle, apmf::log::Hex(effParam.form), renewedMs);

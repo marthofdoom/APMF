@@ -873,6 +873,10 @@ File `kIntent_CombatApproach` with `ival = kApproach_Strict | kApproach_Point | 
 
 Refused at the call (`kInvalidHandle`, `CanServe` says why): not served (`[MoveOrder] bStrictOrders=0`, an unverified runtime, a failed seat check), Strict without Point and Hold, `fval` below 24, a substrate holder, 64 live orders.
 
+**Attacks on the way (2026-11-25, no ABI change).** While the order is Travelling or Returning, the actor's new melee attacks are refused (`core/MoveSuppress.cpp`). Ranged attacks and casts pass and a running swing finishes. A `kCombatMove_Bash`, `_PowerBash` or `_PowerAttack` started then answers `Refused` with `why = kCombatMoveWhy_OffenseDenied` and `blocker` = the strict ch.24 claim's handle (a ch.7 deny names a ch.7 claim). Ask again when `GetMoveOrderState` reads Standing. A blocked walk (2.5 s without moving) or a 15 s walk allows attacks for 4 s. Not enforced where the claim does not outrank Engine on the CombatAction facet.
+
+**The held engagement (ch.20 / ch.21).** Its 20 s no-progress and arrived-idle ends are suspended while the order stands.
+
 ## ABI v47 fire once: a claim that casts at most once (ch.8b)
 
 `kCastFlag_FireOnce` on `RequestCast`. Gate on `abiVersion >= 47` and `castSeats & kCastSeat_FireOnce` (plus the spell's own row bit). 0x06 answers NO while an effect of the claim's driven form (the delivery proxy when one was minted) is on the target, while either hand casts the driven form, and for good after the claim's cast fired. `GetClaimEndReason` reads `kClaimEnd_Fired` from the fire on, while the claim still stands. `Repoint` no longer renews a fired claim. Refused: `RequestEx`, `kCastFlag_DenyHandOnly`, `[CastSeats] EnableFireOnce=0` or seats not installed. Full reference: [FACETS.md Fire once](FACETS.md#fire-once-kcastflag_fireonce).

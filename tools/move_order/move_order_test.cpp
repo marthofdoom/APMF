@@ -1,6 +1,7 @@
 // Host test of native/core/MoveOrderLogic.h (the strict movement order, ABI v48). Needs no game and no CommonLib:
 //   g++ -std=c++20 -O2 -pthread -Wall -Wextra -I native tools/move_order/move_order_test.cpp -o /path/t && /path/t
 #include "core/MoveOrderLogic.h"
+#include "core/MoveSuppressLogic.h"
 
 #include <cstdio>
 #include <limits>
@@ -165,6 +166,86 @@ int main() {
         Step(o, r, 90.0f, 3);
         Step(o, r, 20.0f, 4);
         CHECK(r.arrivedCount == 1 && r.displacedCount == 1);
+    }
+    {   // The return's mean: a return that has not ended, or ended elsewhere, is in no mean (2026-11-25: "walked back 1, mean 9766").
+        WalkBack w;
+        for (int i = 0; i < 14; ++i) w.Book(kMovePhase_Returning, kMovePhase_Returning, 250);
+        w.Book(kMovePhase_Returning, kMovePhase_Standing, 200);
+        CHECK(w.done == 1 && w.MeanMs() == 3700 && w.openMs == 0);
+        w.Book(kMovePhase_Standing, kMovePhase_Returning, 250);
+        for (int i = 0; i < 24; ++i) w.Book(kMovePhase_Returning, kMovePhase_Returning, 250);
+        CHECK(w.done == 1 && w.MeanMs() == 3700 && w.openMs == 6000);
+        w.Book(kMovePhase_Returning, kMovePhase_NotCarried, 250);
+        CHECK(w.done == 1 && w.doneMs == 3700 && w.openMs == 0);
+        CHECK(WalkBack{}.MeanMs() == 0);
+    }
+    {   // The early look at the area: once per order, only an area the engine updates and can pick.
+        CHECK(HurryDue(false, true, true, 1.0f));
+        CHECK(!HurryDue(true, true, true, 1.0f) && !HurryDue(false, false, true, 1.0f) && !HurryDue(false, true, false, 1.0f));
+        CHECK(!HurryDue(false, true, true, kHurryPeriod));
+    }
+    {   // Which leaf is a melee attack.
+        CHECK(MeleeLeaf(kLeafMelee, false) && MeleeLeaf(kLeafMelee, true));   // an archer's bash too
+        CHECK(!MeleeLeaf(kLeafRanged, true) && !MeleeLeaf(kLeafRanged, false) && !MeleeLeaf(0, false));
+        CHECK(MeleeLeaf(kLeafMelee | kLeafRanged, false) && !MeleeLeaf(kLeafMelee | kLeafRanged, true));
+    }
+    {   // No new attack while travelling, and no way to strand him.
+        SuppressClock c;
+        SuppressEnd   e;
+        std::uint64_t t = 1000;
+        float         x = 0;
+        for (int i = 0; i < 20; ++i, t += 250, x += 60) CHECK(c.Pick(true, false, x, 0, 0, t, e));   // he walks: refused
+        CHECK(!c.Pick(false, true, x, 0, 0, t, e) && e == SuppressEnd::kNone);                        // arrived: at once
+        // a wait outside the leash, not carried, yielded: not travel
+        CHECK(!c.Pick(false, false, x, 0, 0, t += 250, e));
+        // S1: a wait of 3 s (not carried / yielded / down) between two walks is not a stall: the first travel pick after it refuses
+        c = {};
+        t = 1000;
+        CHECK(c.Pick(true, false, 0, 0, 0, t, e) && c.Pick(true, false, 5, 0, 0, t += 250, e));
+        for (int i = 0; i < 12; ++i) CHECK(!c.Pick(false, false, 5, 0, 0, t += 250, e));
+        CHECK(c.Pick(true, false, 5, 0, 0, t += 250, e) && e == SuppressEnd::kNone);
+        // BLOCKED: travelling, not moving
+        c = {};
+        t = 1000;
+        std::uint64_t on = 0, off = 0, run = 0, worst = 0;
+        bool          stall = false;
+        for (int i = 0; i < 400; ++i, t += 250) {
+            const bool s = c.Pick(true, false, static_cast<float>(i % 2) * 20.0f, 0, 0, t, e);
+            stall = stall || e == SuppressEnd::kStall;
+            s ? ++on : ++off;
+            run   = s ? run + 250 : 0;
+            worst = run > worst ? run : worst;
+        }
+        CHECK(stall && worst <= SuppressTuning::kStallMs + 250 && off > on);
+        // TIMEOUT: he moves for ever (a chain drags him in circles), re-pointed as often as the client likes
+        c = {};
+        t = 1000;
+        run = worst = 0;
+        bool leg = false;
+        for (int i = 0; i < 400; ++i, t += 250) {
+            const bool s = c.Pick(true, false, static_cast<float>(i * 60), 0, 0, t, e);
+            leg   = leg || e == SuppressEnd::kLeg;
+            run   = s ? run + 250 : 0;
+            worst = run > worst ? run : worst;
+        }
+        CHECK(leg && worst <= SuppressTuning::kLegMs + 250);
+        // a short wait does not restart the leg, standing does
+        c = {};
+        c.Pick(true, false, 0, 0, 0, 1000, e);
+        c.Pick(false, false, 0, 0, 0, 1250, e);
+        c.Pick(true, false, 500, 0, 0, 1500, e);
+        CHECK(c.legMs == 1000);
+        c.Pick(false, true, 500, 0, 0, 1750, e);
+        c.Pick(true, false, 500, 0, 0, 2000, e);
+        CHECK(c.legMs == 2000);
+        // a rest ends by arriving, not only by the clock
+        c = {};
+        for (t = 1000; t <= 4000; t += 250) c.Pick(true, false, 0, 0, 0, t, e);
+        CHECK(!c.Pick(true, false, 0, 0, 0, 4250, e));
+        c.Pick(false, true, 0, 0, 0, 4500, e);
+        CHECK(c.Pick(true, false, 0, 0, 0, 4750, e));
+        // the selector stopped for seconds (another fight): a fresh leg
+        CHECK(c.Pick(true, false, 0, 0, 0, 60000, e) && c.legMs == 60000);
     }
     {   // Seqlock: one writer rewriting the slot 1e6 times against 4 readers, 0 mixed snapshots.
         auto              slot = std::make_unique<Slot>();

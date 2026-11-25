@@ -6,6 +6,7 @@
 #include "core/ActionGate.h"         // BlockHoldDenyArmed(): the ABI v43 hold's deny rides ch.7's leaf seats
 #include "core/Allowance.h"          // SeatVerified(): the mit-3.7 F1 self-check gate
 #include "core/Clock.h"
+#include "core/MoveSuppress.h"       // ch.24 strict order: no started attack while he travels
 #include "core/ControlMap.h"         // TryGetOwningClaimBasis (lock-free RCU read), ServeCheck
 #include "core/FacetAttribution.h"   // Decide: the calling client vs the Engine source on the CombatAction facet
 #include "core/Log.h"
@@ -179,7 +180,7 @@ namespace apmf::combatmove {
             case APMF_API::kCombatMoveWhy_NotAttackReady: return "the behaviour graph's IsAttackReady is not true";
             case APMF_API::kCombatMoveWhy_TargetGone:     return "the named target is not a loaded living actor";
             case APMF_API::kCombatMoveWhy_NoAttackData:   return "the actor base has no attack entry of that kind";
-            case APMF_API::kCombatMoveWhy_OffenseDenied:  return "a winning kIntent_CombatAction claim denies Offense";
+            case APMF_API::kCombatMoveWhy_OffenseDenied:  return "a claim denies Offense (ch.7, or a strict ch.24 order that is travelling)";
             case APMF_API::kCombatMoveWhy_SubstrateHeld:  return "a combat substrate holds the actor";
             case APMF_API::kCombatMoveWhy_Outranked:      return "the client does not outrank Engine on the CombatAction "
                                                                  "facet (APMF_Sources.ini / the Harbinger page)";
@@ -358,6 +359,15 @@ namespace apmf::combatmove {
                 owner = APMF_API::kInvalidHandle;
                 if (apmf::ControlMap::Get().TryGetOwningClaimBasis(a_actor, APMF_API::kIntent_CombatSubstrate, p, b, &owner))
                     return refuse(APMF_API::kCombatMoveWhy_SubstrateHeld, owner, std::format(" (h={})", owner));
+            }
+
+            // ch.24 strict order: he travels before he attacks (core/MoveSuppress.cpp). The client reads OffenseDenied
+            // with blocker = the strict claim's handle (a ch.7 deny names a ch.7 claim). Checked here, at the start.
+            {
+                Handle order = APMF_API::kInvalidHandle;
+                if (apmf::moveorder::SuppressCombatMove(a_actor, order))
+                    return refuse(APMF_API::kCombatMoveWhy_OffenseDenied, order,
+                                  std::format(" (h={}: he is TRAVELLING under a strict movement order; ask again when it reads Standing)", order));
             }
 
             // The move competes with what the engine's combat tree would choose next: the calling client must

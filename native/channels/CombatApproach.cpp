@@ -1587,6 +1587,21 @@ namespace apmf::combatapproach {
         return std::memcmp(have, want, sizeof(have)) == 0 ? Carry::kCarried : Carry::kNot;
     }
 
+    // UpdateAreas (AE 0x55BF50 / SE 0x5004E0 / 1.7.104 0x563DC0) updates an active area when now - (+0x20) > (+0x24), and the
+    // standard Update ends by writing both itself on every road (+0x20 = now, +0x24 = 1.0: AE 0x7FA798, SE 0x760FED, 1.7.104
+    // 0x80F4F8), so the shorter period lives until that one update and nothing has to put it back. Geometry untouched.
+    bool HurryArea(RE::CombatController* a_ctl) {
+        void* const cur = a_ctl ? static_cast<void*>(a_ctl->GetRuntimeData().currentArea) : nullptr;
+        if (!cur || *reinterpret_cast<const std::uintptr_t*>(cur) != g_vtStd || At<void*>(cur, kAreaCtl) != static_cast<void*>(a_ctl))
+            return false;
+        static_assert(apmf::movelogic::kHurryPeriod == kBoundPeriod);
+        if (!apmf::movelogic::HurryDue(false, At<std::uint8_t>(cur, kAreaActive) != 0, At<std::uint8_t>(cur, kAreaEnabled) != 0,
+                                       At<float>(cur, kAreaPeriod)))
+            return false;
+        At<float>(cur, kAreaPeriod) = kBoundPeriod;
+        return true;
+    }
+
     bool FindClaim(APMF_API::Handle a_h, std::uint32_t& a_flags, float& a_radius) {
         if (a_h == APMF_API::kInvalidHandle) return false;
         std::shared_lock lk(g_entryMx);

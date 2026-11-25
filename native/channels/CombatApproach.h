@@ -69,6 +69,9 @@ namespace apmf::combatapproach {
         kNot,
     };
     Carry CarryOf(RE::CombatController* a_ctl, const float* a_pos, float a_radius);
+    // The actor's own combat thread: make the engine's next area update due now (one period write, see the .cpp). False =
+    // nothing written (not the standard area, switched off, or already that short).
+    bool HurryArea(RE::CombatController* a_ctl);
     // The live claim `h` (from its first sweep on): its flags and R. Any thread (shared lock).
     bool FindClaim(APMF_API::Handle a_h, std::uint32_t& a_flags, float& a_radius);
     // Why a kApproach_Strict declaration cannot be served now, or nullptr. Any thread. (`a_code`: a ServeRefusal)

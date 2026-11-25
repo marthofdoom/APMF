@@ -4,6 +4,7 @@
 #include "core/BehaviorTreeCatalog.h"
 #include "core/Hook.h"
 #include "core/MoveOrder.h"
+#include "core/MoveSuppress.h"
 #include "channels/CombatApproach.h"
 
 #include <algorithm>
@@ -118,8 +119,9 @@ namespace apmf::moveorder {
             std::atomic<std::uint32_t> stand{ 0 }, travel{ 0 }, orig{ 0 }, flee{ 0 }, hide{ 0 }, down{ 0 };
             std::array<std::atomic<std::uint64_t>, kPhases> phaseMs{};
             std::atomic<float>         maxStand{ 0.0f }, arriveDist{ -1.0f };
-            std::atomic<std::uint64_t> walkBackMs{ 0 };
+            std::atomic<std::uint64_t> walkBackMs{ 0 }, walkOpenMs{ 0 };   // movelogic::WalkBack
             std::atomic<std::uint32_t> walkBacks{ 0 };
+            std::atomic<bool>          hurried{ false };                   // the area was asked for an early look
             std::atomic<std::uint32_t> lastPick{ 0 };   // a Pick
             std::atomic<std::uint32_t> denyOnly{ 0 };
             std::atomic<std::uint32_t> shortEnds{ 0 }, shortStops{ 0 }, shortHolds{ 0 };
@@ -258,6 +260,8 @@ namespace apmf::moveorder {
             a_r.maxStand.store(0.0f, std::memory_order_relaxed);
             a_r.arriveDist.store(-1.0f, std::memory_order_relaxed);
             a_r.walkBackMs.store(0, std::memory_order_relaxed);
+            a_r.walkOpenMs.store(0, std::memory_order_relaxed);
+            a_r.hurried.store(false, std::memory_order_relaxed);
             a_r.refDist.store(0.0f, std::memory_order_relaxed);
             a_r.stopError.store(0.0f, std::memory_order_relaxed);
             a_r.holdUntilMs.store(0, std::memory_order_relaxed);
@@ -270,7 +274,12 @@ namespace apmf::moveorder {
             const std::uint32_t was = a_r.phase.load(std::memory_order_relaxed);
             const std::uint64_t gap = std::min(a_now - std::min(a_now, a_r.lastPickMs.load(std::memory_order_relaxed)), MoveTuning::kPickGapMs);
             if (was < kPhases) a_r.phaseMs[was].fetch_add(gap, std::memory_order_relaxed);
-            if (was == APMF_API::kMovePhase_Returning) a_r.walkBackMs.fetch_add(gap, std::memory_order_relaxed);
+            WalkBack w{ a_r.walkOpenMs.load(std::memory_order_relaxed), a_r.walkBackMs.load(std::memory_order_relaxed),
+                        a_r.walkBacks.load(std::memory_order_relaxed) };
+            w.Book(was, a_phase, gap);
+            a_r.walkOpenMs.store(w.openMs, std::memory_order_relaxed);
+            a_r.walkBackMs.store(w.doneMs, std::memory_order_relaxed);
+            a_r.walkBacks.store(w.done, std::memory_order_relaxed);
             a_r.lastPickMs.store(a_now, std::memory_order_relaxed);
             if (was == a_phase) return;
             a_r.phase.store(a_phase, std::memory_order_relaxed);
@@ -296,6 +305,7 @@ namespace apmf::moveorder {
             if (!Find(&who) || !who.ctl || !who.actor) return Pick::kOrig;
             Snapshot s;
             if (!g_slots[static_cast<std::size_t>(t_sel.slot)].Read(t_sel.fid, s)) {
+                NotePick(t_sel.fid, nullptr, false, false, apmf::combatapproach::WorldMs());
                 t_readBusy.fetch_add(1, std::memory_order_relaxed);
                 return Pick::kOrig;
             }
@@ -318,6 +328,9 @@ namespace apmf::moveorder {
             using apmf::combatapproach::Carry;
             const Carry carry = passed ? Carry::kNot : apmf::combatapproach::CarryOf(who.ctl, tgt.data(), s.leashR);
             if (carry != Carry::kCarried) {
+                NotePick(t_sel.fid, nullptr, false, false, now);
+                if (carry == Carry::kNot && !passed && !r.hurried.load(std::memory_order_relaxed) && apmf::combatapproach::HurryArea(who.ctl))
+                    r.hurried.store(true, std::memory_order_relaxed);
                 Account(r, passed || carry == Carry::kOutranked ? APMF_API::kMovePhase_Yielded : APMF_API::kMovePhase_NotCarried, now);
                 r.orig.fetch_add(1, std::memory_order_relaxed);
                 t_orig.fetch_add(1, std::memory_order_relaxed);
@@ -363,8 +376,8 @@ namespace apmf::moveorder {
             r.displaced.store(rt.displacedCount, std::memory_order_relaxed);
             if (was == APMF_API::kMovePhase_Standing) r.maxStand.store(std::max(r.maxStand.load(std::memory_order_relaxed), dist), std::memory_order_relaxed);
             if (was != APMF_API::kMovePhase_Standing && rt.phase == APMF_API::kMovePhase_Standing) r.arriveDist.store(dist, std::memory_order_relaxed);
-            if (was == APMF_API::kMovePhase_Returning && rt.phase == APMF_API::kMovePhase_Standing) r.walkBacks.fetch_add(1, std::memory_order_relaxed);
             Account(r, rt.phase, now);
+            NotePick(t_sel.fid, who.actor.get(), pick == Pick::kTravel, rt.phase == APMF_API::kMovePhase_Standing, now);
             switch (pick) {
             case Pick::kStand:  r.stand.fetch_add(1, std::memory_order_relaxed);  t_stand.fetch_add(1, std::memory_order_relaxed);  break;
             case Pick::kTravel: r.travel.fetch_add(1, std::memory_order_relaxed); t_travel.fetch_add(1, std::memory_order_relaxed); break;
@@ -407,6 +420,7 @@ namespace apmf::moveorder {
                         if (r.seenSerial.load(std::memory_order_relaxed) != s.serial) Reset(r, s.serial, now);
                         r.passed.store(APMF_API::kMovePass_EssentialDown, std::memory_order_relaxed);
                         r.down.fetch_add(1, std::memory_order_relaxed);
+                        NotePick(t_sel.fid, nullptr, false, false, now);
                         Account(r, APMF_API::kMovePhase_Yielded, now);
                         r.lastPick.store(static_cast<std::uint32_t>(Pick::kOrig), std::memory_order_relaxed);
                     }
@@ -656,12 +670,12 @@ namespace apmf::moveorder {
         const std::uint32_t wb = r.walkBacks.load(std::memory_order_relaxed);
         spdlog::info("[move] 0x{} order #{} SUMMARY ({}): {} for {} ms; travelling {} / standing {} / returning {} / yielded {} / not "
                      "carried {} ms; picks stand {} / travel {} / engine {}; max dist while standing {:.0f}, last arrival at {:.0f}; "
-                     "displaced {}, walked back {} (mean {} ms); Flee denied {}, Hide denied {}, essential down {}; "
+                     "displaced {}, walked back {} (mean {} ms, {} ms in an unfinished return); Flee denied {}, Hide denied {}, essential down {}; "
                      "short stops accepted {} (last at {:.0f}), waits outside the leash {}, flee-only picks {}.",
                      Hex(a_fid), b.snap.gen, a_why, ModeName(b.snap.mode), a_worldMs - b.publishedMs, ms(APMF_API::kMovePhase_Travelling),
                      ms(APMF_API::kMovePhase_Standing), ms(APMF_API::kMovePhase_Returning), ms(APMF_API::kMovePhase_Yielded),
                      ms(APMF_API::kMovePhase_NotCarried), r.stand.load(), r.travel.load(), r.orig.load(), r.maxStand.load(),
-                     r.arriveDist.load(), r.displaced.load(), wb, wb ? r.walkBackMs.load() / wb : 0, r.flee.load(), r.hide.load(),
+                     r.arriveDist.load(), r.displaced.load(), wb, WalkBack{ 0, r.walkBackMs.load(), wb }.MeanMs(), r.walkOpenMs.load(), r.flee.load(), r.hide.load(),
                      r.down.load(), r.shortStops.load(), r.stopError.load(), r.shortHolds.load(), r.denyOnly.load());
     }
 
@@ -674,6 +688,7 @@ namespace apmf::moveorder {
             g_book[k] = Book{};
         }
         g_strictLive.store(0, std::memory_order_relaxed);
+        SuppressReset();
         g_gate.clear();
         g_hi.store(0, std::memory_order_release);
         if (n != 0) spdlog::info("[move] {} -- dropped {} strict order(s).", a_why, n);
@@ -741,6 +756,14 @@ namespace apmf::moveorder {
                      "Flee denied {}, Hide denied {}, flee-only picks {}; foreign objects {}, busy slot reads {}.", g_strictLive.load(), t_brackets.load(),
                      g_selSeen.load(), g_selRefused.load() ? " (a foreign 'Movement Selector' was refused)" : "", t_stand.load(), t_travel.load(),
                      t_orig.load(), t_flee.load(), t_hide.load(), t_denyOnly.load(), t_foreign.load(), t_readBusy.load());
+        SuppressHeartbeat();
+    }
+
+    bool             AnyStrict() { return g_strictLive.load(std::memory_order_relaxed) != 0; }
+    APMF_API::Handle OrderOwner(RE::FormID a_fid) {
+        Snapshot  s;
+        const int i = FindSlot(a_fid);
+        return i >= 0 && g_slots[static_cast<std::size_t>(i)].Read(a_fid, s) && Strict(s.mode) ? s.owner : APMF_API::kInvalidHandle;
     }
 
     std::uint32_t PhaseOf(RE::FormID a_fid) { return GetState(a_fid, nullptr); }

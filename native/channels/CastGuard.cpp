@@ -2,6 +2,9 @@
 #include "core/Log.h"
 #include "core/Registry.h"
 
+#include <unordered_map>
+#include <utility>
+
 // ============================================================================
 // Channel 25 -- CAST GUARD (kIntent_CastGuard, ABI v21, 2026-10-12). ARBITRATION + claim
 // lifecycle ONLY. The guards are enforced one layer down, at the cast seats Harbinger already
@@ -34,19 +37,27 @@ namespace {
         APMF_API::Intent ServesIntent() const override { return APMF_API::kIntent_CastGuard; }
 
         void Engage(RE::FormID id, RE::Actor* /*actor*/, const APMF_API::APMF_Param& param) override {
+            m_said[id] = param.ival;
             spdlog::info("[ch.25] 0x{} cast guard ENGAGED ({}) -- enforced at CheckCast 0x0A (hand casters) and "
                          "CheckStartCast 0x06; Harbinger makes no engine write.",
                          apmf::log::Hex(id), Bits(param.ival));
         }
 
         void OnOwnerChanged(RE::FormID id, RE::Actor* /*actor*/, const APMF_API::APMF_Param& param) override {
+            // A heartbeat Repoint with the same bits says nothing (game thread only, like every channel call).
+            auto [it, fresh] = m_said.try_emplace(id, param.ival);
+            if (!fresh && std::exchange(it->second, param.ival) == param.ival) return;
             spdlog::info("[ch.25] 0x{} cast guard now ({}).", apmf::log::Hex(id), Bits(param.ival));
         }
 
         void Release(RE::FormID id, RE::Actor* /*actor*/) override {
+            m_said.erase(id);
             spdlog::info("[ch.25] 0x{} cast guard released.", apmf::log::Hex(id));
         }
         // No Tick: the guards live entirely in the seat consults (INVARIANTS #1).
+
+    private:
+        std::unordered_map<RE::FormID, std::int32_t> m_said;   // the bits the last line named
     };
 
 }

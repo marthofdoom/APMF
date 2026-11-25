@@ -103,6 +103,30 @@ namespace apmf::movelogic {
         return a_isFleeing || (a_seenMs != 0 && a_now - a_seenMs <= MoveTuning::kFleeLatchMs);
     }
 
+    // One return's walking time. A return that has not ended, or that ended anywhere but Standing, is in no mean.
+    struct WalkBack {
+        std::uint64_t openMs = 0, doneMs = 0;
+        std::uint32_t done = 0;
+        void Book(std::uint32_t a_was, std::uint32_t a_next, std::uint64_t a_gapMs) {
+            if (a_was != APMF_API::kMovePhase_Returning) return;
+            openMs += a_gapMs;
+            if (a_next == APMF_API::kMovePhase_Returning) return;
+            if (a_next == APMF_API::kMovePhase_Standing) {
+                doneMs += openMs;
+                ++done;
+            }
+            openMs = 0;
+        }
+        std::uint64_t MeanMs() const { return done ? doneMs / done : 0; }
+    };
+
+    // The order waits for the engine's next 1.0 s look at his area (a fresh claim, or one right after another): look
+    // now, once per order. Only an area the engine updates (active) and can pick (enabled).
+    inline constexpr float kHurryPeriod = 0.25f;   // the bound's own period (channels/CombatApproach.cpp asserts it)
+    constexpr bool HurryDue(bool a_hurried, bool a_active, bool a_enabled, float a_period) {
+        return !a_hurried && a_active && a_enabled && a_period > kHurryPeriod;
+    }
+
     // The phase to report `a_silentMs` after the last pick.
     constexpr std::uint32_t PhaseNow(std::uint32_t a_phase, std::uint32_t a_passed, std::uint64_t a_silentMs) {
         using namespace APMF_API;
