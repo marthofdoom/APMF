@@ -4,6 +4,11 @@ Updated 2026-11-24 (ch.8b fire once branch `feat/cast-fire-once` first; 2026-11-
 shipped, what's probe-gated, what's next. Keep this current in the SAME change as any
 build/finding/workflow change.
 
+## HEAD OF WORK 2026-11-24b -- H-M1 P-A fix round, branch `feat/hm1-pa2` (from 71ef4c9), NOT merged, NOT field run
+Review S3-1 (already fleeing: `Pick::kDenyOnly`, ranked by S1), S3-2 (short stop: accept inside the leash, 1 s wait outside), SEV-4 F4 (stale phase),
+F5 (late silence is an error line too), F7 and the phase-change lines throttled, audit row 24. No header, ABI, hook-seat or address change. Host test
+`tools/move_order` extended. Agentlog `_agentlogs/harbinger/hm1-pa2.md`.
+
 ## HEAD OF WORK 2026-11-24 -- ch.24 STRICT MOVEMENT ORDER H-M1 piece P-A (ABI v48), branch `feat/hm1-pa`, NOT merged, NOT field run
 
 Spec: MFO `Docs/research/2026-11/hm1-seat-brief.md`. Agentlog `_agentlogs/harbinger/hm1-pa.md`. P-A = header, slot table, the two selector

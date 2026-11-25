@@ -12,6 +12,7 @@
 #include <cstring>
 #include <string_view>
 #include <unordered_map>
+#include <utility>
 
 // Win32 INI read -- the same hand-declared extern every INI-gated file in this project uses.
 extern "C" __declspec(dllimport) unsigned long __stdcall GetPrivateProfileIntA(
@@ -24,7 +25,9 @@ extern "C" __declspec(dllimport) unsigned long __stdcall GetPrivateProfileIntA(
 // order for a value (vfunc 0x0A) and takes the first non-zero one (pick AE 0x85AEE0 / SE 0x7C4080 / 1.7.104 0x870110).
 // While an order stands on an actor Harbinger answers four of those questions, for that actor only:
 //   V0 child 0 (Essential Down, a native 10000 s wait): YES to stand.
-//   V2 child 2 (Flee), V3 child 3 (Hide): NO.
+//   V2 child 2 (Flee), V3 child 3 (Hide): NO. Also while a flee that began before the order was carried keeps his area
+//     switched off (kDenyOnly: nothing else is answered; the selector drops Flee at its next re-pick, the engine's own
+//     context pop clears CombatState::isFleeing, the area comes back, S1 carries it). isFleeing is READ, never written.
 //   V4 child 4 (Return To Combat Area, the native go-to-centre): YES to travel.
 // Every other answer is the engine's own. Nothing is failed and no child is entered by Harbinger (no act / pop is
 // touched): the selector starts and interrupts its children exactly as it does for its own reasons. The point is the
@@ -102,7 +105,7 @@ namespace apmf::moveorder {
 
         // RULE C, printed even at zero.
         std::atomic<std::uint64_t> t_brackets{ 0 }, t_stand{ 0 }, t_travel{ 0 }, t_orig{ 0 }, t_flee{ 0 }, t_hide{ 0 },
-            t_foreign{ 0 }, t_readBusy{ 0 };
+            t_foreign{ 0 }, t_readBusy{ 0 }, t_denyOnly{ 0 };
 
         // ---- the slot table ----
         struct Run {   // combat thread (the actor's own) writes; any thread reads
@@ -116,12 +119,16 @@ namespace apmf::moveorder {
             std::atomic<float>         maxStand{ 0.0f }, arriveDist{ -1.0f };
             std::atomic<std::uint64_t> walkBackMs{ 0 };
             std::atomic<std::uint32_t> walkBacks{ 0 };
+            std::atomic<std::uint32_t> lastPick{ 0 };   // a Pick
+            std::atomic<std::uint32_t> denyOnly{ 0 };
+            std::atomic<std::uint32_t> shortEnds{ 0 }, shortStops{ 0 }, shortHolds{ 0 };
+            std::atomic<float>         refDist{ 0.0f }, stopError{ 0.0f };
+            std::atomic<std::uint64_t> holdUntilMs{ 0 };
         };
         struct Book {   // GAME THREAD only
             Snapshot      snap{};
-            std::uint64_t publishedMs = 0, clearedMs = 0, lineMs = 0;
+            std::uint64_t publishedMs = 0, clearedMs = 0, lineMs = 0, changeMs = 0;
             std::uint32_t phase = APMF_API::kMovePhase_None, arrived = 0, displaced = 0;
-            std::uint32_t stands = 0;
             bool          silentSaid = false;
         };
         std::array<Slot, kMaxSlots> g_slots{};
@@ -130,6 +137,8 @@ namespace apmf::moveorder {
         std::atomic<std::uint32_t>  g_hi{ 0 };   // one past the highest slot used since the last reset
         std::atomic<std::uint32_t>  g_gen{ 0 };
         std::uint32_t               g_serial = 0;   // GAME THREAD only
+        struct Gate { std::uint64_t ms = 0; std::uint32_t skipped = 0; bool open = true; };
+        std::unordered_map<RE::FormID, Gate> g_gate;   // GAME THREAD only: the PUBLISHED / re-point lines, per actor
 
         int FindSlot(RE::FormID a_fid) {
             if (a_fid == 0) return -1;
@@ -212,6 +221,7 @@ namespace apmf::moveorder {
             void*      thread  = nullptr;
             void*      node    = nullptr;
             bool       ours    = false;
+            bool       act     = false;   // the selector's act (it is entered), not its update
             bool       found   = false;   // Find ran
             bool       decided = false;
             Pick       pick    = Pick::kOrig;
@@ -240,12 +250,15 @@ namespace apmf::moveorder {
             a_r.phaseSinceMs.store(a_now, std::memory_order_relaxed);
             a_r.lastPickMs.store(a_now, std::memory_order_relaxed);
             for (auto* c : { &a_r.passed, &a_r.arrived, &a_r.displaced, &a_r.stand, &a_r.travel, &a_r.orig, &a_r.flee, &a_r.hide,
-                             &a_r.down, &a_r.walkBacks })
+                             &a_r.down, &a_r.walkBacks, &a_r.lastPick, &a_r.denyOnly, &a_r.shortEnds, &a_r.shortStops, &a_r.shortHolds })
                 c->store(0, std::memory_order_relaxed);
             for (auto& p : a_r.phaseMs) p.store(0, std::memory_order_relaxed);
             a_r.maxStand.store(0.0f, std::memory_order_relaxed);
             a_r.arriveDist.store(-1.0f, std::memory_order_relaxed);
             a_r.walkBackMs.store(0, std::memory_order_relaxed);
+            a_r.refDist.store(0.0f, std::memory_order_relaxed);
+            a_r.stopError.store(0.0f, std::memory_order_relaxed);
+            a_r.holdUntilMs.store(0, std::memory_order_relaxed);
             a_r.seenSerial.store(a_serial, std::memory_order_release);
         }
 
@@ -305,7 +318,14 @@ namespace apmf::moveorder {
                 Account(r, passed || carry == Carry::kOutranked ? APMF_API::kMovePhase_Yielded : APMF_API::kMovePhase_NotCarried, now);
                 r.orig.fetch_add(1, std::memory_order_relaxed);
                 t_orig.fetch_add(1, std::memory_order_relaxed);
-                return Pick::kOrig;
+                const auto* st   = who.ctl->state;
+                const Pick  none = Uncarried(passed != 0, carry == Carry::kOutranked, st && st->isFleeing, s.ranks != 0);
+                if (none == Pick::kDenyOnly) {
+                    r.denyOnly.fetch_add(1, std::memory_order_relaxed);
+                    t_denyOnly.fetch_add(1, std::memory_order_relaxed);
+                }
+                r.lastPick.store(static_cast<std::uint32_t>(none), std::memory_order_relaxed);
+                return none;
             }
 
             const auto& p  = who.actor->data.location;
@@ -316,8 +336,22 @@ namespace apmf::moveorder {
             rt.arrivedCount   = r.arrived.load(std::memory_order_relaxed);
             rt.displacedCount = r.displaced.load(std::memory_order_relaxed);
             rt.phaseSinceMs   = r.phaseSinceMs.load(std::memory_order_relaxed);
-            const std::uint32_t was  = rt.phase;
-            const Pick          pick = Step(Order{ s.mode, s.flags, s.leashR, s.arriveR }, rt, dist, now);
+            rt.shortEnds      = r.shortEnds.load(std::memory_order_relaxed);
+            rt.refDist        = r.refDist.load(std::memory_order_relaxed);
+            rt.holdUntilMs    = r.holdUntilMs.load(std::memory_order_relaxed);
+            rt.stopError      = r.stopError.load(std::memory_order_relaxed);
+            rt.shortStops     = r.shortStops.load(std::memory_order_relaxed);
+            rt.shortHolds     = r.shortHolds.load(std::memory_order_relaxed);
+            const std::uint32_t was   = rt.phase;
+            const bool          ended = t_sel.act && r.lastPick.load(std::memory_order_relaxed) == static_cast<std::uint32_t>(Pick::kTravel);
+            const Pick          pick  = Step(Order{ s.mode, s.flags, s.leashR, s.arriveR }, rt, dist, now, ended);
+            r.lastPick.store(static_cast<std::uint32_t>(pick), std::memory_order_relaxed);
+            r.shortEnds.store(rt.shortEnds, std::memory_order_relaxed);
+            r.refDist.store(rt.refDist, std::memory_order_relaxed);
+            r.holdUntilMs.store(rt.holdUntilMs, std::memory_order_relaxed);
+            r.stopError.store(rt.stopError, std::memory_order_relaxed);
+            r.shortStops.store(rt.shortStops, std::memory_order_relaxed);
+            r.shortHolds.store(rt.shortHolds, std::memory_order_relaxed);
             r.dist.store(dist, std::memory_order_relaxed);
             r.arrived.store(rt.arrivedCount, std::memory_order_relaxed);
             r.displaced.store(rt.displacedCount, std::memory_order_relaxed);
@@ -360,9 +394,15 @@ namespace apmf::moveorder {
             if constexpr (I == kEssentialDown) {
                 if (a != 0) {   // really down: the engine's own wait
                     if (Find(nullptr)) {
-                        Run& r = g_run[static_cast<std::size_t>(t_sel.slot)];
+                        Run&       r   = g_run[static_cast<std::size_t>(t_sel.slot)];
+                        const auto now = apmf::combatapproach::WorldMs();
+                        Snapshot   s;
+                        if (!g_slots[static_cast<std::size_t>(t_sel.slot)].Read(t_sel.fid, s)) return a;
+                        if (r.seenSerial.load(std::memory_order_relaxed) != s.serial) Reset(r, s.serial, now);
                         r.passed.store(APMF_API::kMovePass_EssentialDown, std::memory_order_relaxed);
                         r.down.fetch_add(1, std::memory_order_relaxed);
+                        Account(r, APMF_API::kMovePhase_Yielded, now);
+                        r.lastPick.store(static_cast<std::uint32_t>(Pick::kOrig), std::memory_order_relaxed);
                     }
                     return a;
                 }
@@ -386,11 +426,12 @@ namespace apmf::moveorder {
         }
 
         template <class F>
-        void Bracket(void* a_node, void* a_thread, F a_call) {
+        void Bracket(void* a_node, void* a_thread, bool a_act, F a_call) {
             const Sel saved = t_sel;
             t_sel           = Sel{};
             t_sel.thread    = a_thread;
             t_sel.node      = a_node;
+            t_sel.act       = a_act;
             t_sel.ours      = a_thread && IsMovementSelector(a_node, a_thread);
             if (t_sel.ours) t_brackets.fetch_add(1, std::memory_order_relaxed);
             a_call();
@@ -404,7 +445,7 @@ namespace apmf::moveorder {
             }
             if (g_strictLive.load(std::memory_order_relaxed) == 0) return orig(a_node, a_thread);
             void* ret = nullptr;
-            Bracket(a_node, a_thread, [&] { ret = orig(a_node, a_thread); });
+            Bracket(a_node, a_thread, true, [&] { ret = orig(a_node, a_thread); });
             return ret;
         }
         void SelUpdateThunk(void* a_node, void* a_thread) {
@@ -414,7 +455,7 @@ namespace apmf::moveorder {
                 return;
             }
             if (g_strictLive.load(std::memory_order_relaxed) == 0) return orig(a_node, a_thread);
-            Bracket(a_node, a_thread, [&] { orig(a_node, a_thread); });
+            Bracket(a_node, a_thread, false, [&] { orig(a_node, a_thread); });
         }
 
         // ---- install guards ----
@@ -568,15 +609,26 @@ namespace apmf::moveorder {
         b.publishedMs = a_worldMs;
         b.lineMs      = a_worldMs;
         b.phase       = APMF_API::kMovePhase_Pending;
-        b.arrived = b.displaced = b.stands = 0;
+        b.arrived = b.displaced = 0;
+        b.changeMs   = 0;
         b.silentSaid = false;
+        Gate& gate = g_gate[a_s.fid];
+        gate.open  = gate.ms == 0 || a_worldMs - std::min(a_worldMs, gate.ms) >= MoveTuning::kRepointLineMs;
+        if (!gate.open) {
+            ++gate.skipped;
+            return true;
+        }
+        gate.ms = a_worldMs;
+        if (gate.skipped != 0)
+            spdlog::info("[move] 0x{} {} order(s) since the last PUBLISHED line were not logged (re-pointed faster than one per {} ms).",
+                         Hex(a_s.fid), std::exchange(gate.skipped, 0u), MoveTuning::kRepointLineMs);
         spdlog::info("[move] 0x{} order #{} PUBLISHED: {} at {:.0f},{:.0f},{:.0f}, leash {:.0f}, arrive {:.0f} (claim h={}, slot {}).",
                      Hex(a_s.fid), a_s.gen, ModeName(a_s.mode), a_s.points[0][0], a_s.points[0][1], a_s.points[0][2], a_s.leashR,
                      a_s.arriveR, a_s.owner, i);
         return true;
     }
 
-    void Clear(RE::FormID a_fid, const char* a_why, std::uint64_t a_worldMs) {
+    void Clear(RE::FormID a_fid, const char* a_why, std::uint64_t a_worldMs, bool a_repoint) {
         const int i = FindSlot(a_fid);
         if (i < 0) return;
         const auto k = static_cast<std::size_t>(i);
@@ -585,6 +637,10 @@ namespace apmf::moveorder {
         g_book[k]           = Book{};
         g_book[k].clearedMs = a_worldMs;
         g_strictLive.fetch_sub(1, std::memory_order_relaxed);
+        if (a_repoint) {   // an order that lived shorter than the line period, or whose PUBLISHED line was not logged
+            const auto g = g_gate.find(a_fid);
+            if (g != g_gate.end() && (!g->second.open || a_worldMs - std::min(a_worldMs, g->second.ms) < MoveTuning::kRepointLineMs)) return;
+        }
         const Run& r = g_run[k];
         if (r.seenSerial.load(std::memory_order_acquire) != b.snap.serial) {
             spdlog::info("[move] 0x{} order #{} CLEARED ({}): the engine never asked for his movement under it.", Hex(a_fid), b.snap.gen, a_why);
@@ -594,12 +650,13 @@ namespace apmf::moveorder {
         const std::uint32_t wb = r.walkBacks.load(std::memory_order_relaxed);
         spdlog::info("[move] 0x{} order #{} SUMMARY ({}): {} for {} ms; travelling {} / standing {} / returning {} / yielded {} / not "
                      "carried {} ms; picks stand {} / travel {} / engine {}; max dist while standing {:.0f}, last arrival at {:.0f}; "
-                     "displaced {}, walked back {} (mean {} ms); Flee denied {}, Hide denied {}, essential down {}.",
+                     "displaced {}, walked back {} (mean {} ms); Flee denied {}, Hide denied {}, essential down {}; "
+                     "short stops accepted {} (last at {:.0f}), waits outside the leash {}, flee-only picks {}.",
                      Hex(a_fid), b.snap.gen, a_why, ModeName(b.snap.mode), a_worldMs - b.publishedMs, ms(APMF_API::kMovePhase_Travelling),
                      ms(APMF_API::kMovePhase_Standing), ms(APMF_API::kMovePhase_Returning), ms(APMF_API::kMovePhase_Yielded),
                      ms(APMF_API::kMovePhase_NotCarried), r.stand.load(), r.travel.load(), r.orig.load(), r.maxStand.load(),
                      r.arriveDist.load(), r.displaced.load(), wb, wb ? r.walkBackMs.load() / wb : 0, r.flee.load(), r.hide.load(),
-                     r.down.load());
+                     r.down.load(), r.shortStops.load(), r.stopError.load(), r.shortHolds.load(), r.denyOnly.load());
     }
 
     void ResetAll(const char* a_why) {
@@ -611,6 +668,7 @@ namespace apmf::moveorder {
             g_book[k] = Book{};
         }
         g_strictLive.store(0, std::memory_order_relaxed);
+        g_gate.clear();
         g_hi.store(0, std::memory_order_release);
         if (n != 0) spdlog::info("[move] {} -- dropped {} strict order(s).", a_why, n);
     }
@@ -629,20 +687,33 @@ namespace apmf::moveorder {
             }
             return;
         }
-        const std::uint32_t phase = r.phase.load(std::memory_order_relaxed), arrived = r.arrived.load(std::memory_order_relaxed),
-                            disp  = r.displaced.load(std::memory_order_relaxed);
+        const std::uint64_t lastPick = r.lastPickMs.load(std::memory_order_relaxed);
+        const std::uint64_t silent   = a_worldMs - std::min(a_worldMs, lastPick);
+        if (silent <= MoveTuning::kStaleMs) {
+            b.silentSaid = false;
+        } else if (!b.silentSaid && silent > MoveTuning::kSilentMs) {
+            b.silentSaid = true;
+            spdlog::error("[move] 0x{} order #{}: the engine stopped asking for his movement {} s ago (last phase {}, engine passed 0x{:X}, brackets "
+                          "this session {}): the order does NOTHING while that lasts.", Hex(a_fid), b.snap.gen, silent / 1000,
+                          PhaseName(r.phase.load(std::memory_order_relaxed)), r.passed.load(std::memory_order_relaxed), t_brackets.load());
+        }
+        const std::uint32_t phase = PhaseNow(r.phase.load(std::memory_order_relaxed), r.passed.load(std::memory_order_relaxed), silent),
+                            arrived = r.arrived.load(std::memory_order_relaxed), disp = r.displaced.load(std::memory_order_relaxed);
         const float dist = r.dist.load(std::memory_order_relaxed);
-        if (disp != b.displaced) {
+        const bool due = (disp != b.displaced || phase != b.phase) && a_worldMs - std::min(a_worldMs, b.changeMs) >= MoveTuning::kChangeLineMs;
+        if (due) b.changeMs = a_worldMs;
+        if (due && disp != b.displaced) {
             b.displaced = disp;
             spdlog::info("[move] 0x{} DISPLACED (#{}): {:.0f} from the point, past the leash {:.0f}; walking back.", Hex(a_fid), disp, dist,
                          b.snap.leashR);
         }
-        if (phase != b.phase) {
+        if (due && phase != b.phase) {
             const bool back = b.phase == APMF_API::kMovePhase_Returning;
             if (phase == APMF_API::kMovePhase_Standing) {
-                ++b.stands;
-                spdlog::info("[move] 0x{} {}: {:.0f} from the point, {} ms since the order went live.", Hex(a_fid), back ? "RETURNED" : "ARRIVED",
-                             dist, a_worldMs - b.publishedMs);
+                const float err = r.stopError.load(std::memory_order_relaxed);
+                spdlog::info("[move] 0x{} {}: {:.0f} from the point, {} ms since the order went live{}.", Hex(a_fid), back ? "RETURNED" : "ARRIVED",
+                             dist, a_worldMs - b.publishedMs,
+                             err > 0.0f ? fmt::format(" (SHORT STOP: the engine's path ends at {:.0f})", err) : std::string{});
             } else {
                 spdlog::info("[move] 0x{} {} -> {} (dist {:.0f}, engine passed 0x{:X}).", Hex(a_fid), PhaseName(b.phase), PhaseName(phase), dist,
                              r.passed.load(std::memory_order_relaxed));
@@ -653,17 +724,17 @@ namespace apmf::moveorder {
         if (a_worldMs - b.lineMs < MoveTuning::kLineMs) return;
         b.lineMs = a_worldMs;
         spdlog::info("[move] 0x{} {} {}: dist {:.0f} of {:.0f},{:.0f},{:.0f}, leash {:.0f}, arrive {:.0f}; picks stand {} / travel {} / engine "
-                     "{}; Flee denied {}, Hide denied {}, displaced {}, blocks 0 (P-B).", Hex(a_fid), ModeName(b.snap.mode), PhaseName(phase), dist,
+                     "{}; Flee denied {}, Hide denied {}, displaced {}, short stops {} / waits {}, flee-only picks {}, blocks 0 (P-B).", Hex(a_fid), ModeName(b.snap.mode), PhaseName(phase), dist,
                      b.snap.points[0][0], b.snap.points[0][1], b.snap.points[0][2], b.snap.leashR, b.snap.arriveR, r.stand.load(), r.travel.load(),
-                     r.orig.load(), r.flee.load(), r.hide.load(), disp);
+                     r.orig.load(), r.flee.load(), r.hide.load(), disp, r.shortStops.load(), r.shortHolds.load(), r.denyOnly.load());
     }
 
     void HeartbeatLine() {
         if (!g_installed.load(std::memory_order_relaxed)) return;
         spdlog::info("[move] heartbeat: {} live order(s); selector brackets {}, identified {} time(s){}; answers stand {} / travel {} / engine {}; "
-                     "Flee denied {}, Hide denied {}; foreign objects {}, busy slot reads {}.", g_strictLive.load(), t_brackets.load(),
+                     "Flee denied {}, Hide denied {}, flee-only picks {}; foreign objects {}, busy slot reads {}.", g_strictLive.load(), t_brackets.load(),
                      g_selSeen.load(), g_selRefused.load() ? " (a foreign 'Movement Selector' was refused)" : "", t_stand.load(), t_travel.load(),
-                     t_orig.load(), t_flee.load(), t_hide.load(), t_foreign.load(), t_readBusy.load());
+                     t_orig.load(), t_flee.load(), t_hide.load(), t_denyOnly.load(), t_foreign.load(), t_readBusy.load());
     }
 
     std::uint32_t PhaseOf(RE::FormID a_fid) { return GetState(a_fid, nullptr); }
@@ -684,10 +755,14 @@ namespace apmf::moveorder {
                 info.phase = g_selRefused.load(std::memory_order_relaxed) && !g_moveSel.load(std::memory_order_relaxed)
                                  ? APMF_API::kMovePhase_NotCarried : APMF_API::kMovePhase_Pending;
             } else {
-                info.phase          = r.phase.load(std::memory_order_relaxed);
-                info.dist           = r.dist.load(std::memory_order_relaxed);
                 const auto now      = apmf::combatapproach::WorldMs();
-                info.sinceMs        = static_cast<std::uint32_t>(now - std::min(now, r.phaseSinceMs.load(std::memory_order_relaxed)));
+                const auto lastPick = r.lastPickMs.load(std::memory_order_relaxed);
+                const auto was      = r.phase.load(std::memory_order_relaxed);
+                info.phase          = PhaseNow(was, r.passed.load(std::memory_order_relaxed), now - std::min(now, lastPick));
+                const auto since    = info.phase == was ? r.phaseSinceMs.load(std::memory_order_relaxed) : lastPick;
+                info.stopError      = r.stopError.load(std::memory_order_relaxed);
+                info.dist           = r.dist.load(std::memory_order_relaxed);
+                info.sinceMs        = static_cast<std::uint32_t>(now - std::min(now, since));
                 info.passedThrough  = r.passed.load(std::memory_order_relaxed);
                 info.arrivedCount   = r.arrived.load(std::memory_order_relaxed);
                 info.displacedCount = r.displaced.load(std::memory_order_relaxed);

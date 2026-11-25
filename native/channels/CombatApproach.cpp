@@ -315,6 +315,7 @@ namespace {
     constexpr std::uint32_t kSeatCurrent  = 1u << 2;   // the standard area was the current one
     constexpr std::uint32_t kSeatStood    = 1u << 3;   // Harbinger 1b: the claim does not outrank the source
                                                        //   of the engine's own area (APMF_Sources.ini): not written
+    constexpr std::uint32_t kSeatRanked   = 1u << 4;   // the claim outranks the source, as of the last verdict (kept between S1 runs)
 
     std::shared_mutex                                       g_entryMx;
     std::unordered_map<RE::FormID, std::unique_ptr<Entry>> g_entries;
@@ -602,10 +603,23 @@ namespace {
             sf |= kSeatYielded;
         const bool enabled = At<std::uint8_t>(a_area, kAreaEnabled) != 0;
         if (!enabled) sf |= kSeatDisabled;
+        sf |= e.seatFlags.load(std::memory_order_relaxed) & kSeatRanked;   // the last verdict, until this update's
         e.seatFlags.store(sf, std::memory_order_relaxed);
         if (sf & kSeatYielded) g_s1Yielded.fetch_add(1, std::memory_order_relaxed);
         if (!enabled) {   // not selectable at all: carrying the bound would change nothing
             g_s1Disabled.fetch_add(1, std::memory_order_relaxed);
+            // ABI v48: a running flee keeps the area disabled, and the movement pick refuses that flee (core/MoveOrder)
+            // only where the claim outranks the area's source. Decided here too: the decision below is never reached.
+            if (e.moveGen != 0) {
+                apmf::facetattr::Verdict v;
+                try {
+                    v = apmf::facetattr::Decide(apmf::sources::Facet::kCombat, e.owner,
+                                                g_s1Src.load(std::memory_order_relaxed), fid, "");
+                } catch (...) {
+                    v.enforce = true;
+                }
+                e.seatFlags.store(v.enforce ? sf | kSeatRanked : (sf & ~kSeatRanked) | kSeatStood, std::memory_order_relaxed);
+            }
             return;
         }
 
@@ -621,7 +635,7 @@ namespace {
                 v.enforce = true;   // the decision could not be recorded: keep the pre-1b behaviour
             }
             if (!v.enforce) {
-                e.seatFlags.store(sf | kSeatStood, std::memory_order_relaxed);
+                e.seatFlags.store((sf & ~kSeatRanked) | kSeatStood, std::memory_order_relaxed);
                 g_s1Stood.fetch_add(1, std::memory_order_relaxed);
                 if (apmf::facetattr::LineDue(apmf::sources::Facet::kCombat, fid, 24u << 8 | 1u)) {
                     spdlog::info("[ch.24] 0x{} the bound is NOT written: claim h={} ({} priority {}) does not "
@@ -651,6 +665,7 @@ namespace {
             g_touched[a_area] = t;   // step 1 erased any previous record of this area
             g_touchedCount.store(g_touched.size(), std::memory_order_relaxed);
         }
+        e.seatFlags.store(sf | kSeatRanked, std::memory_order_relaxed);
         e.applied.fetch_add(1, std::memory_order_relaxed);
         e.lastApplyMs.store(now, std::memory_order_relaxed);
         g_s1Applied.fetch_add(1, std::memory_order_relaxed);
@@ -856,7 +871,7 @@ namespace {
 
     void Apply(RE::FormID a_id, const APMF_API::APMF_Param& a_param, const char* a_what) {
         const std::uint64_t now = apmf::clock::MonotonicMs();
-        apmf::moveorder::Clear(a_id, a_what, WorldNow());   // the previous declaration's order, if any
+        apmf::moveorder::Clear(a_id, a_what, WorldNow(), true);   // the previous declaration's order, if any
         {
             std::unique_lock lk(g_entryMx);
             auto& slot = g_entries[a_id];
@@ -1385,6 +1400,7 @@ namespace apmf::combatapproach {
                     s.leashR    = radius;
                     s.arriveR   = apmf::movelogic::MoveTuning::kDefaultArriveR;
                     s.gen       = moveGen;
+                    s.ranks     = (sf & kSeatRanked) != 0 ? 1u : 0u;
                     s.points[0] = { posX.x, posX.y, posX.z };
                     if (!apmf::moveorder::Publish(s, wnow)) {
                         End(id, APMF_API::kApproachState_Refused, "64 strict movement orders are live (no slot):");
