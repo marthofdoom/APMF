@@ -124,6 +124,7 @@ namespace {
         apmf::idle::ResetAll("revert/new game");
         // ch.22: same, for the re-entry deny entries of the outgoing world.
         apmf::reentrydeny::ResetAll("revert/new game");
+        apmf::castseats::ResetFireOnce("revert/new game");   // ABI v47: no fire record outlives its claims
         apmf::combatsubstrate::ResetAll("revert/new game");   // S2a: the outgoing world's substrates (no engine call)
         apmf::combatops::ResetAll("revert/new game");   // H1: queued StopCombats dropped unrun (completions: the Discard below)
         // ch.23 pursuit leash (ABI v16): same, for the leash entries (anchor handles of the outgoing world).
@@ -440,6 +441,7 @@ namespace {
             apmf::idle::ResetAll("kPreLoadGame");
             // ch.22: same -- no re-entry deny crosses the load.
             apmf::reentrydeny::ResetAll("kPreLoadGame");
+            apmf::castseats::ResetFireOnce("kPreLoadGame");   // ABI v47: no fire record crosses the load
             apmf::combatsubstrate::ResetAll("kPreLoadGame");   // S2a: forget every substrate (no co-save)
             apmf::combatops::ResetAll("kPreLoadGame");   // H1: queued StopCombats dropped unrun (completions: the Discard below)
             apmf::attackselect::ResetAll("kPreLoadGame");   // ch.18: no attack mix / window crosses the load

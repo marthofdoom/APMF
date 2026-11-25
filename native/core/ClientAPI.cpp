@@ -490,7 +490,8 @@ namespace {
             info.castSeats = rows |
                              (apmf::reanimateseat::Installed() ? APMF_API::kCastSeat_Reanimate : 0u) |
                              (apmf::equipgate::RowEquipAdmissionArmed() && (rows & hostile) != 0 ? APMF_API::kCastSeat_TypeEquip : 0u) |
-                             (apmf::castclassify::SkillGateInstalled() ? APMF_API::kCastSeat_SkillGate : 0u);
+                             (apmf::castclassify::SkillGateInstalled() ? APMF_API::kCastSeat_SkillGate : 0u) |
+                             (apmf::castseats::FireOnceArmed() ? APMF_API::kCastSeat_FireOnce : 0u);   // ABI v47
             if (verdict == APMF_API::kServe_Refused && chk.why) {
                 std::size_t n = 0;
                 for (; n + 1 < sizeof(info.why) && chk.why[n] != '\0'; ++n) info.why[n] = chk.why[n];
@@ -566,6 +567,7 @@ namespace {
         case 44: return "0.20.0";   // ch.31 kCombatMove_PowerAttack: the same release (confirm at the cut)
         case 45: return "0.20.0";   // ch.33 combat style: the same release (confirm at the cut)
         case 46: return "the release after 0.20.5";   // cast seat coverage (name it at the cut)
+        case 47: return "the release after 0.20.5";   // ch.8b kCastFlag_FireOnce: the same release (confirm at the cut)
         default: return "a release newer than this one";
         }
     }

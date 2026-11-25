@@ -989,6 +989,14 @@ rows, the five pointer classes and the code bytes (A + its GetMagnitude target, 
   row or changing a row's term without updating `kRowTerm` and `VerifyZeroModel`; treating -1.0 or a negative score as
   explainable; a row kind whose term can be zero for a non-data reason (D, the resistance multiply in C on a non-zero
   input) counted as explained.
+**FIRE ONCE (ABI v47, 2026-11-24, `feat/cast-fire-once`, NOT field run).** `kCastFlag_FireOnce`: `FoNo` composed into
+`CheckStartCastThunk` after the row's own bound (and into `ReanimateSeat.cpp` through `FireOnceHold`), `FoCastSink`
+(`TESSpellCastEvent`) spends the handle's record in `core/FireOnce.h` `Ledger`. `ControlMap` refuses the flag at the call and
+stops renewing a spent claim; `plugin.cpp` calls `ResetFireOnce` on load / revert. **To change what counts as a fire: the sink,
+`Ledger::NoteCast` and `ToRecord` (live claims, else the newest recent ended one); to add a reason not to start: `FoNo`.** Test: `tools/fire_once/fire_once_test.cpp`.
+- **What breaks:** any of it running for a claim without the flag (every entry tests it first); dropping a LIVE claim's record
+  (it re-arms); spending on 0x0B (a request, an interrupt would spend it); ending the claim at the fire (un-teaches a proxy and
+  opens the hand mid-release); moving the in-flight read to a caller that does not first require the hand idle.
 **HARBINGER 1b CAST SLICE (2026-10-12):** every claim-driven refusal / substitution here is ranked on the Cast facet against the seat's displaced function (`core/FacetAttribution` "CAST SLICE"); never give a claim answer before that test, and never count it on the silent follow-on seats.
 **THE ROOT-CAUSE FIX** the other five seats sat downstream of and could never reach:
 a heal/buff-OTHER spell (kTargetActor/kAimed RestoreHealth — Healing Hands, Heal

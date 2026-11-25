@@ -1,8 +1,26 @@
 # APMF STATUS — living handoff (start here)
 
-Updated 2026-11-23 (ch.8b hostile rows / skill gate branch `feat/seat-unseated-casters` first; 2026-11-17: ch.33 owed refresh branch `fix/ch33-refresh-retry` first, then the v0.20.5 hotfix branch `fix/stopcombat-main`, the stability H1 fix branch below it; proxy save integrity fix branch after it). Current version **v0.20.2** (release prep 2026-11-14, ABI v45 unchanged, a small real release: the ch.3 sneak release confirm, see CHANGELOG) / previously **v0.20.1** (cut 2026-11-13, ABI v45 unchanged, a REAL release, the first since v0.17.0, cumulative over v0.18.0 to v0.20.0 plus the seat 0 hostile-effect fix, see CHANGELOG) / previously **v0.20.0** (cut 2026-11-12, ABI v45) and **v0.19.0** (cut 2026-11-10, ABI v36) and **v0.18.0** (cut 2026-11-09, ABI v35, PRERELEASE) and **v0.17.0** (cut 2026-11-08, ABI v33) and **v0.16.0** (cut 2026-11-02, ABI v32) and **v0.15.2** (cut 2026-10-28, ABI v31) and **v0.15.1** (cut 2026-10-26, ABI v30) and **v0.15.0** (cut 2026-10-25, ABI v30) and **v0.14.0** (cut 2026-10-21, ABI v28) and **v0.13.1** (cut 2026-10-13, ABI v24) and **v0.13.0** (release cut 2026-10-12; see RELEASED v0.13.0 below; prior v0.12.0 PUBLISHED release, ABI v21). The current state of the build: what's
+Updated 2026-11-24 (ch.8b fire once branch `feat/cast-fire-once` first; 2026-11-23: ch.8b hostile rows / skill gate branch `feat/seat-unseated-casters` first; 2026-11-17: ch.33 owed refresh branch `fix/ch33-refresh-retry` first, then the v0.20.5 hotfix branch `fix/stopcombat-main`, the stability H1 fix branch below it; proxy save integrity fix branch after it). Current version **v0.20.2** (release prep 2026-11-14, ABI v45 unchanged, a small real release: the ch.3 sneak release confirm, see CHANGELOG) / previously **v0.20.1** (cut 2026-11-13, ABI v45 unchanged, a REAL release, the first since v0.17.0, cumulative over v0.18.0 to v0.20.0 plus the seat 0 hostile-effect fix, see CHANGELOG) / previously **v0.20.0** (cut 2026-11-12, ABI v45) and **v0.19.0** (cut 2026-11-10, ABI v36) and **v0.18.0** (cut 2026-11-09, ABI v35, PRERELEASE) and **v0.17.0** (cut 2026-11-08, ABI v33) and **v0.16.0** (cut 2026-11-02, ABI v32) and **v0.15.2** (cut 2026-10-28, ABI v31) and **v0.15.1** (cut 2026-10-26, ABI v30) and **v0.15.0** (cut 2026-10-25, ABI v30) and **v0.14.0** (cut 2026-10-21, ABI v28) and **v0.13.1** (cut 2026-10-13, ABI v24) and **v0.13.0** (release cut 2026-10-12; see RELEASED v0.13.0 below; prior v0.12.0 PUBLISHED release, ABI v21). The current state of the build: what's
 shipped, what's probe-gated, what's next. Keep this current in the SAME change as any
 build/finding/workflow change.
+
+## HEAD OF WORK 2026-11-24 -- ch.8b: FIRE ONCE (ABI v47), branch `feat/cast-fire-once`, NOT merged, NOT field run
+
+MFO plan `Docs/research/2026-11/anim-residue-plan.md` package H-A (R1: Mystic Wind, Script + Restore, 47 unanimated lines).
+Agentlog `/mnt/gaming/modlists/Projects/_agentlogs/harbinger/fire-once.md`.
+1. `kCastFlag_FireOnce` (bit 17), `kCastSeat_FireOnce` (bit 18 of `castSeats`), `kClaimEnd_Fired` (12). No struct, no slot,
+   no new hook, address or engine write. `core/FireOnce.h` (the ledger, pure), `core/CastSeats.cpp` "FIRE ONCE".
+2. **The fire counter did not exist for ordinary claims.** The census 0x0B counts are per window, log only, INI-gated, and
+   0x0B is the release REQUEST (APMF-B93). The substrate's `TESSpellCastEvent` sink records substrate holders only. The
+   ledger takes the same event, for the claim's driven form, after a 0x06 YES for that handle.
+3. **Read on the three builds:** 0x06's leaf caller requires the asking hand's `MagicCaster::currentSpell` (+0x28) null before the
+   call (AE 0x89F470, SE 0x808C0B, 1.7.104 0x8B4910). The event is sent synchronously inside `ActorMagicCaster::SpellCast`
+   (SE 0x542470, AE 0x5B1290, 1.7.104 0x5BFDD0). VERIFIED on all three (tier-3 review 2026-11-24).
+4. Refused: RequestEx form, `kCastFlag_DenyHandOnly`, not armed. A spent claim stands until Release or its deadline, Repoint
+   no longer renews it.
+5. Field check: `[ch.8b fire once] ... first CheckStartCast YES`, one `FIRED`, then NO "already fired" lines, no second
+   `[ctcensus] ... FIRED` on the handle's window. **MFO (A2) must mirror `APMF_API.h` byte for byte.**
+6. Tests: `tools/fire_once/fire_once_test.cpp` (host, g++), and the same `SelfCheck()` at install.
 
 ## HEAD OF WORK 2026-11-23 -- ch.8b: THE FOUR HOSTILE CASTER ROWS, THE SKILL GATE, THE ROW EQUIP ADMISSION (ABI v46), branch `feat/seat-unseated-casters`, NOT merged, NOT field run
 

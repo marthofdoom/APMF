@@ -411,6 +411,9 @@ takes a hit by the actor. Refused while a block hold stands (GuardHeld) or the w
 row. 1.6.1170 and 1.5.97. An older APMF refuses the value at the call: gate on abiVersion >= 44. No co-save.
 Docs/FACETS.md "Power attack".
 
+ABI v47 (2026-11-24, branch feat/cast-fire-once): FIRE ONCE. No slot, no struct change: kCastFlag_FireOnce = 1 << 17,
+kCastSeat_FireOnce = 1 << 18 in castSeats, kClaimEnd_Fired = 12. Section "ABI v47 fire once" below.
+
 ABI v46 (2026-11-23, branch feat/seat-unseated-casters): CAST SEAT COVERAGE. No slot, no struct change:
 APMF_ServeInfo::reserved[0] is now castSeats (CastSeatCoverage bits), written by CanServe. Under v46 it
 reads 0. Section "ABI v46 cast seat coverage" below.
@@ -476,6 +479,14 @@ Moved verbatim from `native/APMF_API.h` (line 2191 at 9d01cdf). The header keeps
 ```text
 This is MFO's field-proven Sightline own-ray recipe (2026-09-30), now Harbinger's.
 ```
+
+## ABI v47 fire once: a claim that casts at most once (ch.8b)
+
+The header: `kABIVersion` 47, `kCastFlag_FireOnce` (bit 17 of `CastFlags`), `kCastSeat_FireOnce` (bit 18 of `CastSeatCoverage`), `kClaimEnd_Fired` (12). No struct, no slot. A v47 client still holds an `APMF_API_v38*`.
+
+**Why.** Restore, Offensive and Disarm claims repeat every hand cycle. A spell whose effects key several rows could not be claimed without risking that.
+
+**Degrade.** An APMF under v47 ignores the bit and the claim repeats: do not file such a claim there (`abiVersion >= 47` and `castSeats & kCastSeat_FireOnce`).
 
 ## ABI v46 cast seat coverage: which caster rows a cast claim can drive (ch.8b)
 

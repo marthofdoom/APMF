@@ -221,8 +221,8 @@ namespace {
     }
 
     // ABI v31 (GetClaimEndReason): why Harbinger ended a ch.20 / ch.21 claim, by HANDLE. Written on the game
-    // thread where the release is queued, read from ANY thread: every access is under g_endMx, a LEAF lock
-    // (nothing is called while it is held). Bounded: past kEndRecordsMax the oldest record goes first.
+    // thread where the release is queued (and, ABI v47, by the fire-once cast event on its own thread), read from
+    // ANY thread: every access is under g_endMx, a LEAF lock (nothing is called while it is held). Bounded: past kEndRecordsMax the oldest record goes first.
     // Handles come from one counter that never repeats in a process, so a record never names a newer claim.
     constexpr std::size_t                                kEndRecordsMax = 256;
     std::mutex                                           g_endMx;

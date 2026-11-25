@@ -6,6 +6,7 @@
 #include "core/Clock.h"
 #include "channels/CastCompose.h"   // castcompose::ExtractFromPackage (ch.8b FromPackage read)
 #include "core/CastClassify.h"       // IsPlacementSpell (summon / reanimate self-claim match)
+#include "core/CastSeats.h"           // ABI v47 kCastFlag_FireOnce: FireOnceArmed (refusal), FireOnceSpent (Repoint)
 #include "core/ReanimateSeat.h"       // ABI v42 kCastFlag_CorpseTarget: Installed (call-time refusal)
 #include "core/CastProxy.h"         // castproxy::Acquire/Unref (ch.8b kSelf delivery-flip, writer thread)
 #include "core/MainThread.h"        // mainthread::Post (defer proxy teardown past this Drain's Publish)
@@ -560,6 +561,19 @@ namespace apmf {
             return APMF_API::kInvalidHandle;
         }
 
+        // ABI v47: kCastFlag_FireOnce on that same degenerate form is refused for the same reason: no target, so no
+        // seat answers the claim and nothing would bound it.
+        if (intent == APMF_API::kIntent_Cast && param &&
+            (static_cast<std::uint32_t>(param->ival) & APMF_API::kCastFlag_FireOnce) != 0) {
+            if (dry)
+                return DryRefuse(dry, APMF_API::kServeRefusal_BadRequest,
+                                 "kCastFlag_FireOnce on RequestEx(kIntent_Cast): that form carries no target");
+            spdlog::warn("[api] cast claim REFUSED (actor 0x{}): kCastFlag_FireOnce on RequestEx(kIntent_Cast). That form "
+                         "carries no target, so no seat answers it and nothing would bound it. Use RequestCast.",
+                         apmf::log::Hex(actor));
+            return APMF_API::kInvalidHandle;
+        }
+
         // ABI v11: a kIntent_Cast RequestEx carrying kCastFlag_AtPosition is a
         // POSITION CAST -- a one-shot remote cast at param.pos (core/PositionCast.h).
         // It NEVER enters the control map: no claim is published, so no engine seat
@@ -816,6 +830,19 @@ namespace apmf {
                 if (dry) return DryRefuse(dry, code, bad);
                 spdlog::warn("[api] RequestCast REFUSED (actor 0x{}): kCastFlag_CorpseTarget -- {}.",
                              apmf::log::Hex(actor), bad);
+                return APMF_API::kInvalidHandle;
+            }
+        }
+        // ABI v47: kCastFlag_FireOnce (core/CastSeats.cpp FIRE ONCE).
+        if (req && (req->flags & APMF_API::kCastFlag_FireOnce) != 0) {
+            const bool  armed = apmf::castseats::FireOnceArmed();
+            const char* bad   = !armed ? apmf::castseats::FireOnceNotArmedReason()
+                                : (req->flags & APMF_API::kCastFlag_DenyHandOnly) != 0
+                                    ? "kCastFlag_FireOnce with kCastFlag_DenyHandOnly (a deny-only claim drives nothing)"
+                                    : nullptr;
+            if (bad) {
+                if (dry) return DryRefuse(dry, armed ? APMF_API::kServeRefusal_BadRequest : APMF_API::kServeRefusal_NotInstalled, bad);
+                spdlog::warn("[api] RequestCast REFUSED (actor 0x{}): kCastFlag_FireOnce -- {}.", apmf::log::Hex(actor), bad);
                 return APMF_API::kInvalidHandle;
             }
         }
@@ -1263,6 +1290,17 @@ namespace apmf {
                 if (!csp || !apmf::castclassify::IsReanimateSpell(csp))
                     spdlog::warn("[ch.8b] 0x{} cast claim (h={}, spell 0x{}) sets kCastFlag_CorpseTarget but the spell "
                                  "has no Reanimate effect: the bit does nothing here (only the Reanimate caster reads it).",
+                                 apmf::log::Hex(op.actor), op.handle, apmf::log::Hex(spell));
+            }
+            // ABI v47: a Reanimate spell is served by the corpse seat only, so without kCastFlag_CorpseTarget no seat
+            // reads the bit on it.
+            if (op.kind == PendingOp::Kind::kCast && (castFlags & APMF_API::kCastFlag_FireOnce) != 0 &&
+                (castFlags & APMF_API::kCastFlag_CorpseTarget) == 0 && spell != 0) {
+                auto* fsp = RE::TESForm::LookupByID<RE::SpellItem>(spell);
+                if (fsp && apmf::castclassify::IsReanimateSpell(fsp))
+                    spdlog::warn("[ch.8b] 0x{} cast claim (h={}, spell 0x{}) sets kCastFlag_FireOnce on a Reanimate spell "
+                                 "without kCastFlag_CorpseTarget: if the engine builds its Reanimate caster the bit does "
+                                 "nothing (the engine's own rules decide).",
                                  apmf::log::Hex(op.actor), op.handle, apmf::log::Hex(spell));
             }
             if (castTarget != 0) {
@@ -1789,8 +1827,12 @@ namespace apmf {
             // elapsed deadline as gone without waiting for the sweep). Expiry stays
             // final: renewal EXTENDS a live window, it never reopens a closed one.
             const auto          nowMs     = apmf::clock::MonotonicMs();
+            // ABI v47: a SPENT fire-once claim (its one cast has fired) is not renewed: it ends at the deadline it
+            // already has, or at the client's Release. Every other cast claim renews exactly as before.
+            const bool spentOnce = isCastClaim && (self->castFlags & APMF_API::kCastFlag_FireOnce) != 0 &&
+                                   apmf::castseats::FireOnceSpent(handle);
             const std::uint32_t renewedMs =
-                (self->expiresMs != 0 && self->ttlMs != 0 && nowMs < self->expiresMs) ? self->ttlMs : 0;
+                (!spentOnce && self->expiresMs != 0 && self->ttlMs != 0 && nowMs < self->expiresMs) ? self->ttlMs : 0;
             if (renewedMs != 0) self->expiresMs = nowMs + renewedMs;
 
             if (best == self) {
@@ -1804,7 +1846,7 @@ namespace apmf {
                 // not hold.
                 channel->OnOwnerChanged(formID, actor, effParam);
                 spdlog::info("[ctl] 0x{} ~ ch.{} {} REPOINT (h={}, form=0x{}, TTL renewed +{} ms "
-                             "[0 = no TTL on this claim, or its window had already lapsed]).",
+                             "[0 = no TTL on this claim, its window had already lapsed, or a fire-once claim already fired]).",
                              apmf::log::Hex(formID), channel->ChannelNo(), channel->Name(),
                              handle, apmf::log::Hex(effParam.form), renewedMs);
             }
