@@ -1638,7 +1638,9 @@ namespace apmf::combatentry::hold {
 
             // A STRICT ORDER (ch.24): where he stands is the client's choice, so "no path progress" and "arrived but
             // idle" mean nothing while it is live. Both windows are held at zero (a FULL window is needed after it).
-            const bool strict = apmf::moveorder::PhaseOf(sn.id) != APMF_API::kMovePhase_None;
+            const auto phase = apmf::moveorder::PhaseOf(sn.id);   // Pending / NotCarried / Yielded do not hold him anywhere: the watchdog stays
+            const bool strict = phase == APMF_API::kMovePhase_Travelling || phase == APMF_API::kMovePhase_Standing ||
+                                phase == APMF_API::kMovePhase_Returning;
             if (strict != t.strictOrder) {
                 t.strictOrder = strict;
                 spdlog::info("[hold] 0x{} -> 0x{}: strict movement order {}: the no-progress and arrived-idle ends are {}.",

@@ -198,6 +198,12 @@ int main() {
         CHECK(!c.Pick(false, true, x, 0, 0, t, e) && e == SuppressEnd::kNone);                        // arrived: at once
         // a wait outside the leash, not carried, yielded: not travel
         CHECK(!c.Pick(false, false, x, 0, 0, t += 250, e));
+        // S1: a wait of 3 s (not carried / yielded / down) between two walks is not a stall: the first travel pick after it refuses
+        c = {};
+        t = 1000;
+        CHECK(c.Pick(true, false, 0, 0, 0, t, e) && c.Pick(true, false, 5, 0, 0, t += 250, e));
+        for (int i = 0; i < 12; ++i) CHECK(!c.Pick(false, false, 5, 0, 0, t += 250, e));
+        CHECK(c.Pick(true, false, 5, 0, 0, t += 250, e) && e == SuppressEnd::kNone);
         // BLOCKED: travelling, not moving
         c = {};
         t = 1000;

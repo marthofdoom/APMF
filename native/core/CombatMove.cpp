@@ -180,7 +180,7 @@ namespace apmf::combatmove {
             case APMF_API::kCombatMoveWhy_NotAttackReady: return "the behaviour graph's IsAttackReady is not true";
             case APMF_API::kCombatMoveWhy_TargetGone:     return "the named target is not a loaded living actor";
             case APMF_API::kCombatMoveWhy_NoAttackData:   return "the actor base has no attack entry of that kind";
-            case APMF_API::kCombatMoveWhy_OffenseDenied:  return "a winning kIntent_CombatAction claim denies Offense";
+            case APMF_API::kCombatMoveWhy_OffenseDenied:  return "a claim denies Offense (ch.7, or a strict ch.24 order that is travelling)";
             case APMF_API::kCombatMoveWhy_SubstrateHeld:  return "a combat substrate holds the actor";
             case APMF_API::kCombatMoveWhy_Outranked:      return "the client does not outrank Engine on the CombatAction "
                                                                  "facet (APMF_Sources.ini / the Harbinger page)";

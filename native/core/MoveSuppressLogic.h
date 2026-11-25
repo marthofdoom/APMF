@@ -40,7 +40,8 @@ namespace apmf::movelogic {
             lastPickMs = a_now;
             if (a_stood || gap) legMs = 0;
             if (a_stood) restUntilMs = 0;
-            if (!a_travel || a_now < restUntilMs) return false;
+            if (!a_travel) { anchorMs = a_now; return false; }   // a wait (NotCarried, Yielded, down) is not a stall; the 15 s leg bound still runs
+            if (a_now < restUntilMs) return false;
             const float dx = a_x - x, dy = a_y - y, dz = a_z - z;
             if (legMs == 0) legMs = a_now, anchorMs = a_now, x = a_x, y = a_y, z = a_z;
             else if (dx * dx + dy * dy + dz * dz >= SuppressTuning::kStallMove * SuppressTuning::kStallMove)
