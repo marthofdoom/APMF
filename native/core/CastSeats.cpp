@@ -455,6 +455,9 @@ namespace apmf::castseats {
         std::atomic<const char*> g_foWhyNot{ "the ch.8b cast seats are not installed (before kDataLoaded, VR, or not "
                                              "exactly 1.6.1170, 1.5.97 or 1.7.104)" };
         constexpr std::size_t    kFoPruneAt = 64;
+        // An ENDED claim's record counts as the fire only this long after its last YES: the longest window plus the
+        // cast that YES began.
+        constexpr std::uint64_t  kFoEndedMaxMs = APMF_API::kCastMaxTtlMs + 3000;
 
         static_assert(std::is_same_v<apmf::fireonce::Handle, APMF_API::Handle>);
         static_assert(offsetof(RE::MagicCaster, currentSpell) == 0x28,
@@ -488,18 +491,20 @@ namespace apmf::castseats {
                                                   RE::BSTEventSource<RE::TESSpellCastEvent>*) override {
                 try {
                     if (!a_e || !a_e->object || a_e->spell == 0) return RE::BSEventNotifyControl::kContinue;
-                    const RE::FormID                    actor = a_e->object->GetFormID();
-                    std::vector<apmf::fireonce::Handle> fired;
+                    const RE::FormID                   actor = a_e->object->GetFormID();
+                    std::vector<apmf::fireonce::Match> spent;
                     {
                         std::scoped_lock lk(g_foMx);
                         if (g_fo.Size() == 0) return RE::BSEventNotifyControl::kContinue;
-                        fired = g_fo.NoteCast(actor, a_e->spell);
+                        spent = g_fo.NoteCast(actor, a_e->spell);
                     }
+                    if (spent.empty()) return RE::BSEventNotifyControl::kContinue;
+                    // Which of them fired: FireOnce.h ToRecord. The rest spend silently.
+                    bool       live  = false;
+                    const auto fired = apmf::fireonce::ToRecord(
+                        spent, [](apmf::fireonce::Handle h) { return apmf::ControlMap::Get().IsClaimLive(h); },
+                        apmf::clock::MonotonicMs(), kFoEndedMaxMs, live);
                     for (const auto h : fired) {
-                        // An ended claim's record spends silently when a newer one shares the cast; alone, it is the
-                        // claim whose deadline passed (or that was released) with its cast already in the hand.
-                        const bool live = apmf::ControlMap::Get().IsClaimLive(h);
-                        if (!live && fired.size() > 1) continue;
                         apmf::combatentry::RecordClaimEnd(h, APMF_API::kClaimEnd_Fired);
                         spdlog::info("[ch.8b fire once] 0x{} FIRED 0x{} (h={}): {}",
                                      apmf::log::Hex(actor), apmf::log::Hex(a_e->spell), h,
@@ -1120,11 +1125,15 @@ namespace apmf::castseats {
 
         // FIRE ONCE (ABI v47): an event sink, no new hook. Any missing half refuses the flag by name.
         const char* foWhy = nullptr;
-        auto*       foSrc = RE::ScriptEventSourceHolder::GetSingleton();
+        RE::ScriptEventSourceHolder* foSrc = nullptr;   // its GetSingleton is an id-based engine CALL: verified first
         if (!ReadIniFlag("EnableFireOnce", 1)) foWhy = "[CastSeats] EnableFireOnce=0 (set in APMF.ini)";
         else if (cover == 0)                   foWhy = "no caster row is covered (see the [ch.8b seats] lines)";
         else if (!apmf::fireonce::SelfCheck()) foWhy = "the fire ledger failed its self-check";
-        else if (!foSrc)                       foWhy = "the engine's spell cast event source is unavailable";
+        else if (!apmf::allowance::SeatVerified(REL::Relocation<std::uintptr_t>{ RELOCATION_ID(14108, 14298) }.address(),
+                                                "Travel.ScriptEventSourceHolder.GetSingleton (the hit / combat sinks)"))
+            foWhy = "the ScriptEventSourceHolder row refused";
+        else if (foSrc = RE::ScriptEventSourceHolder::GetSingleton(); !foSrc)
+            foWhy = "the engine's spell cast event source is unavailable";
         if (foWhy) {
             g_foWhyNot.store(foWhy, std::memory_order_release);
             spdlog::warn("[ch.8b fire once] NOT armed: {} -- a kCastFlag_FireOnce request is refused.", foWhy);
@@ -1182,9 +1191,10 @@ namespace apmf::castseats {
         if ((a_claim.flags & APMF_API::kCastFlag_FireOnce) == 0) return;
         bool                                first = false;
         std::vector<apmf::fireonce::Handle> all;
+        const auto                          nowMs = static_cast<std::uint64_t>(apmf::clock::MonotonicMs());
         {
             std::scoped_lock lk(g_foMx);
-            first = g_fo.NoteYes(a_claim.handle, a_actor, a_driven);
+            first = g_fo.NoteYes(a_claim.handle, a_actor, a_driven, nowMs);
             if (first && g_fo.Size() > kFoPruneAt) all = g_fo.Handles();
         }
         if (!first) return;

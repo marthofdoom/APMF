@@ -14,8 +14,8 @@ Agentlog `/mnt/gaming/modlists/Projects/_agentlogs/harbinger/fire-once.md`.
    0x0B is the release REQUEST (APMF-B93). The substrate's `TESSpellCastEvent` sink records substrate holders only. The
    ledger takes the same event, for the claim's driven form, after a 0x06 YES for that handle.
 3. **Read on the three builds:** 0x06's leaf caller requires the asking hand's `MagicCaster::currentSpell` (+0x28) null before the
-   call (AE 0x89F470, SE 0x808C0B, 1.7.104 0x8B4910). SE sends the event synchronously inside `ActorMagicCaster::SpellCast`
-   (0x54272C). INFERRED for AE and 1.7.104: the same order.
+   call (AE 0x89F470, SE 0x808C0B, 1.7.104 0x8B4910). The event is sent synchronously inside `ActorMagicCaster::SpellCast`
+   (SE 0x542470, AE 0x5B1290, 1.7.104 0x5BFDD0). VERIFIED on all three (tier-3 review 2026-11-24).
 4. Refused: RequestEx form, `kCastFlag_DenyHandOnly`, not armed. A spent claim stands until Release or its deadline, Repoint
    no longer renews it.
 5. Field check: `[ch.8b fire once] ... first CheckStartCast YES`, one `FIRED`, then NO "already fired" lines, no second

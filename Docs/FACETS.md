@@ -1222,11 +1222,11 @@ if (g_apmf->abiVersion >= 47 && (info.castSeats & APMF_API::kCastSeat_FireOnce))
 
 | The start seat (0x06) answers NO when | Read from |
 |---|---|
-| the effect is active on the claim's target (the caster for Summon, BoundItem) | Harbinger's own walk of the active effects, never for a concentration spell |
+| an effect of the claim's driven form (the delivery proxy when one was minted) is active on the claim's target (the caster for Summon, BoundItem) | Harbinger's own walk of the active effects, never for a concentration spell. An effect left by the original spell or by another proxy is not seen |
 | either hand is casting the driven form | the hand casters' current spell |
 | the claim's cast has fired, final for the handle | the actor's spell cast event for the driven form, after a start seat YES for this handle |
 
-Nothing else changes: equip, aim, duration, magicka and animation are as for any cast claim, and the world's reaction is the client's. An interrupted cast raises no event and may start again. A cast the claim never asked for is not its fire. After the fire the claim still holds its hand until `Release` or its deadline. `Repoint` no longer moves that deadline and cannot add or clear the bit. A repeating heal must not set it (logged on a Restore caster). Two fire-once claims on one spell, one per hand, count as the better one. A Reanimate spell needs `kCastFlag_CorpseTarget`.
+Nothing else changes: equip, aim, duration, magicka and animation are as for any cast claim, and the world's reaction is the client's. An interrupted cast raises no event and may start again. A cast the claim never asked for (begun before the claim) is not its fire, and `CastSpellImmediate` raises no event, so it never counts. After the fire the claim still holds its hand until `Release` or its deadline. `Repoint` no longer moves that deadline and cannot add or clear the bit. A repeating heal must not set it (logged on a Restore caster). Two fire-once claims with the same driven form, one per hand, count as the better one. When proxies are minted the two hands' driven forms differ and the claims cast once each: for one cast, file one claim. The fire is counted per actor and driven form, not per hand. The reason store is shared with ch.20 and ch.21 and holds 256 records, the oldest go first: read it soon after the fire. A Reanimate spell needs `kCastFlag_CorpseTarget`.
 
 Refused: `RequestEx`, `kCastFlag_DenyHandOnly`, not armed (VR, an unverified build, the INI key, no event source). Log tag `[ch.8b fire once]`. Field status: not run.
 

@@ -1578,9 +1578,10 @@ namespace APMF_API {
                                              //   See "ABI v42: CORPSE TARGET" at the end of this header.
 
         kCastFlag_FireOnce      = 1u << 17,  // ABI v47. This claim casts AT MOST ONCE, on any caster type. The
-                                             //   start seat answers NO while the spell's effect is on the claim's
-                                             //   target, while the spell is being cast from either hand, and for
-                                             //   good once a cast the claim asked for has fired. RequestCast only.
+                                             //   start seat answers NO while an effect of the claim's driven form
+                                             //   (the delivery proxy when one was minted) is on the claim's
+                                             //   target, while either hand is casting that form, and for good
+                                             //   once a cast the claim asked for has fired. RequestCast only.
                                              //   REFUSED (kInvalidHandle, logged) when not installed, with
                                              //   kCastFlag_DenyHandOnly, and on RequestEx. An APMF older than v47
                                              //   IGNORES the bit and the claim repeats: gate on abiVersion >= 47
@@ -3938,21 +3939,26 @@ namespace APMF_API {
     // spell whose effects map to several rows (Script + Restore). With this bit the bound belongs to the CLAIM,
     // whatever caster type the engine builds.
     // THE START SEAT (0x06) answers NO for such a claim when any of these holds, and is otherwise unchanged:
-    //   * the spell's effect is active on the claim's target (on the caster for Summon / BoundItem), on EVERY row
-    //     (never read for a concentration spell, as in the engine);
+    //   * an effect of the claim's driven form (the delivery proxy when one was minted, else the spell) is active on
+    //     the claim's target (on the caster for Summon / BoundItem), on EVERY row (never read for a concentration
+    //     spell, as in the engine). An effect left by the original spell or by another proxy (the other hand's, or
+    //     an earlier one) is NOT seen;
     //   * either hand of the actor is casting the claim's driven form right now;
     //   * a cast the claim asked for has fired: the actor's TESSpellCastEvent for the driven form after a start
     //     seat YES for this handle. FINAL for the handle. A concentration spell fires when its channel starts; its
     //     running channel is not cut.
     // An INTERRUPTED cast raises no event, so the claim may start again. A cast of the same spell the claim never
-    // asked for (a client's own direct cast before any YES) is not the claim's fire.
+    // asked for (one begun before the claim) is not the claim's fire. MagicCaster::CastSpellImmediate raises no
+    // event, so a client's direct cast by it never counts, before or after a YES.
     // AFTER THE FIRE the claim still stands (its hand stays denied to other spells, its spell may stay equipped)
     // until Release or its deadline. Repoint still updates it but no longer moves the deadline.
     // GetClaimEndReason(handle) reads kClaimEnd_Fired from that moment (also when the claim's deadline passed while
     // its cast was still in the hand). To cast again: Release, then a new
     // RequestCast. The flags are fixed at RequestCast; Repoint cannot add or clear the bit.
     // NOT FOR A REPEATING HEAL: the claim would cast it once (logged when a Restore caster meets the bit).
-    // ONE driven form per actor: two FireOnce claims on the same spell, one per hand, count as the better one.
+    // Two FireOnce claims of one actor with the same DRIVEN form, one per hand, count as the better one. When
+    // proxies are minted each hand has its own, so the driven forms differ: the claims cast once EACH and the
+    // either-hand read does not see the other hand's proxy. A client that wants one cast files ONE claim.
     // A Reanimate spell is served only with kCastFlag_CorpseTarget. A row whose coverage bit is clear, or a seat
     // whose facet another source outranks, keeps the engine's own answers: the bit does nothing there.
     // SERVED when APMF_ServeInfo::castSeats has kCastSeat_FireOnce ([CastSeats] EnableFireOnce, default 1).

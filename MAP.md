@@ -992,8 +992,8 @@ rows, the five pointer classes and the code bytes (A + its GetMagnitude target, 
 **FIRE ONCE (ABI v47, 2026-11-24, `feat/cast-fire-once`, NOT field run).** `kCastFlag_FireOnce`: `FoNo` composed into
 `CheckStartCastThunk` after the row's own bound (and into `ReanimateSeat.cpp` through `FireOnceHold`), `FoCastSink`
 (`TESSpellCastEvent`) spends the handle's record in `core/FireOnce.h` `Ledger`. `ControlMap` refuses the flag at the call and
-stops renewing a spent claim; `plugin.cpp` calls `ResetFireOnce` on load / revert. **To change what counts as a fire: the sink
-and `Ledger::NoteCast`; to add a reason not to start: `FoNo`.** Test: `tools/fire_once/fire_once_test.cpp`.
+stops renewing a spent claim; `plugin.cpp` calls `ResetFireOnce` on load / revert. **To change what counts as a fire: the sink,
+`Ledger::NoteCast` and `ToRecord` (live claims, else the newest recent ended one); to add a reason not to start: `FoNo`.** Test: `tools/fire_once/fire_once_test.cpp`.
 - **What breaks:** any of it running for a claim without the flag (every entry tests it first); dropping a LIVE claim's record
   (it re-arms); spending on 0x0B (a request, an interrupt would spend it); ending the claim at the fire (un-teaches a proxy and
   opens the hand mid-release); moving the in-flight read to a caller that does not first require the hand idle.

@@ -867,7 +867,7 @@ The header: `kCastFlag_CorpseTarget` (bit 16 of `CastFlags`) and `kABIVersion` 4
 
 ## ABI v47 fire once: a claim that casts at most once (ch.8b)
 
-`kCastFlag_FireOnce` on `RequestCast`. Gate on `abiVersion >= 47` and `castSeats & kCastSeat_FireOnce` (plus the spell's own row bit). 0x06 answers NO while the effect is on the target, while either hand casts the driven form, and for good after the claim's cast fired. `GetClaimEndReason` reads `kClaimEnd_Fired` from the fire on, while the claim still stands. `Repoint` no longer renews a fired claim. Refused: `RequestEx`, `kCastFlag_DenyHandOnly`, `[CastSeats] EnableFireOnce=0` or seats not installed. Full reference: [FACETS.md Fire once](FACETS.md#fire-once-kcastflag_fireonce).
+`kCastFlag_FireOnce` on `RequestCast`. Gate on `abiVersion >= 47` and `castSeats & kCastSeat_FireOnce` (plus the spell's own row bit). 0x06 answers NO while an effect of the claim's driven form (the delivery proxy when one was minted) is on the target, while either hand casts the driven form, and for good after the claim's cast fired. `GetClaimEndReason` reads `kClaimEnd_Fired` from the fire on, while the claim still stands. `Repoint` no longer renews a fired claim. Refused: `RequestEx`, `kCastFlag_DenyHandOnly`, `[CastSeats] EnableFireOnce=0` or seats not installed. Full reference: [FACETS.md Fire once](FACETS.md#fire-once-kcastflag_fireonce).
 
 ## ABI v43 block: a held guard (ch.31)
 
