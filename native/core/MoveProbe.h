@@ -27,9 +27,10 @@ namespace apmf::moveprobe {
     // ...and at least one ch.24 claim is being watched. One relaxed load.
     bool Watching();
 
-    // ch.7 act() / pop() thunks (combat threads), before the node's own function. Observe only. `a_denied`
-    // later in the thunk is not known here: an act counts as ENTERED, a force-failed one included.
-    void NoteAct(std::uintptr_t a_vt, RE::FormID a_actor);
+    // ch.7 act() / pop() thunks (combat threads). Observe only. NoteAct comes AFTER the act: `a_denied` = it was
+    // force-failed; such an act counts as ENTERED and changes nothing else (it never ran, so it moved nobody and
+    // is no running attack). NotePop comes before the pop, a force-failed act's paired pop included.
+    void NoteAct(std::uintptr_t a_vt, RE::FormID a_actor, bool a_denied);
     void NotePop(std::uintptr_t a_vt, RE::FormID a_actor);
 
     // ch.24 S1 (combat thread, inside the controller's own update): the controller's current aim controller.

@@ -1303,9 +1303,6 @@ namespace apmf::actiongate {
             // castobs interrupt attribution (2026-10-06): the leaf a WATCHED actor's tree enters. Observe only.
             if (apmf::castobserve::AnyWatched()) apmf::castobserve::NoteLeafAct(ResolveDeliberatingActor(a_control), vt);
 
-            // [Probe] bMoveProbe P1 / P3 -- OBSERVE ONLY (core/MoveProbe.h). One relaxed load while nothing is watched.
-            if (apmf::moveprobe::Watching()) apmf::moveprobe::NoteAct(vt, ResolveDeliberatingActor(a_control));
-
             // [Probe] bRangedSelect -- OBSERVE ONLY, before the leaf's own act() and before any
             // deny below (a denied leaf is still reported as chosen). Never alters the call.
             if (g_rsEnabled.load(std::memory_order_acquire)) RangedProbeObserveAct(vt, a_control);   // acquire: pairs with Install's release
@@ -1459,7 +1456,7 @@ namespace apmf::actiongate {
         // body above, bracketed by the PASSIVE [Probe] bAttackSelect observer (core/AttackSelectProbe.h,
         // ClickUp 86e3bw775) for its watched attack-selection leaves. The observer reads before and after
         // and never touches the call; with the probe off this is one acquire load.
-        void* ActThunk(void* a_this, void* a_control) {
+        void* ActThunkProbed(void* a_this, void* a_control) {
             if (apmf::atkprobe::Armed()) [[unlikely]] {
                 const int leaf = apmf::atkprobe::LeafIndex(*reinterpret_cast<std::uintptr_t*>(a_this));
                 if (leaf >= 0) {
@@ -1477,6 +1474,17 @@ namespace apmf::actiongate {
             return ActThunkBody(a_this, a_control);
         }
 
+        // [Probe] bMoveProbe P1 / P3 -- OBSERVE ONLY (core/MoveProbe.h): after the act, when a force-fail is known (the
+        // pending pop above). Who and which are read before it. One relaxed load while nothing is watched.
+        void* ActThunk(void* a_this, void* a_control) {
+            if (!apmf::moveprobe::Watching()) [[likely]] return ActThunkProbed(a_this, a_control);
+            const auto  vt  = *reinterpret_cast<std::uintptr_t*>(a_this);
+            const auto  fid = g_orig.contains(vt) ? ResolveDeliberatingActor(a_control) : 0;
+            void* const ret = ActThunkProbed(a_this, a_control);
+            apmf::moveprobe::NoteAct(vt, fid, t_pending.node == a_this && t_pending.control == a_control);
+            return ret;
+        }
+
         void PopThunk(void* a_this, void* a_control) {
             // The paired half of a deny: this pop() belongs to the act() we just
             // ForceFail'd on this thread -> run ForceFail's ORIGINAL pop() (top -= 4)
@@ -1486,6 +1494,8 @@ namespace apmf::actiongate {
             if (t_pending.node == a_this && t_pending.control == a_control) {
                 t_pending = PendingPop{};
                 if (const auto ffPop = g_forceFailPop.load(std::memory_order_relaxed)) {
+                    if (apmf::moveprobe::Watching())   // OBSERVE ONLY
+                        apmf::moveprobe::NotePop(*reinterpret_cast<std::uintptr_t*>(a_this), ResolveDeliberatingActor(a_control));
                     reinterpret_cast<Pop_t>(ffPop)(a_this, a_control);
                     return;
                 }
@@ -1515,7 +1525,7 @@ namespace apmf::actiongate {
             // thread state before the node's own pop() (never on the denied-pair path above).
             if (g_rsEnabled.load(std::memory_order_acquire) && g_rsUnreachableVt != 0 && vt == g_rsUnreachableVt)
                 RangedProbeObserveUnreachablePop(a_control);
-            if (apmf::moveprobe::Watching()) apmf::moveprobe::NotePop(vt, ResolveDeliberatingActor(a_control));   // P3, OBSERVE ONLY
+            if (apmf::moveprobe::Watching()) apmf::moveprobe::NotePop(vt, ResolveDeliberatingActor(a_control));   // P1 / P3, OBSERVE ONLY
             reinterpret_cast<Pop_t>(oit->second)(a_this, a_control);
         }
 

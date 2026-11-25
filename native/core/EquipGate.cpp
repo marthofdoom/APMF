@@ -11,6 +11,8 @@
 
 #include <cstring>
 #include <intrin.h>
+#include <map>
+#include <tuple>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -275,14 +277,15 @@ namespace apmf::equipgate {
             return true;
         }
 
-        // [Probe] bRowVerdict: per (actor, form), the engine's answers counted; due when the answer changed (at most
+        // [Probe] bRowVerdict: per (actor, form, hand, row vtable), the engine's answers counted; due when the answer changed (at most
         // every 250 ms) or 10 s passed. Under g_rlMx, released before any log call.
         struct RowVerdict { std::uint64_t ms = 0; std::uint32_t yes = 0, no = 0; bool last = false; };
-        std::unordered_map<std::uint64_t, RowVerdict> g_rowVerdict;
+        std::map<std::tuple<RE::FormID, RE::FormID, int, std::uintptr_t>, RowVerdict> g_rowVerdict;
         std::atomic<bool>                             g_rowVerdictProbe{ false };
-        bool RowVerdictDue(RE::FormID a_actor, RE::FormID a_form, bool a_yes, std::uint32_t& a_outYes, std::uint32_t& a_outNo) {
+        bool RowVerdictDue(RE::FormID a_actor, RE::FormID a_form, int a_hand, std::uintptr_t a_vt, bool a_yes,
+                           std::uint32_t& a_outYes, std::uint32_t& a_outNo) {
             const auto now = apmf::clock::MonotonicMs();
-            const auto key = (static_cast<std::uint64_t>(a_actor) << 32) | static_cast<std::uint64_t>(a_form);
+            const auto key = std::make_tuple(a_actor, a_form, a_hand, a_vt);
             std::scoped_lock lk(g_rlMx);
             auto& v = g_rowVerdict[key];
             ++(a_yes ? v.yes : v.no);
@@ -872,7 +875,7 @@ namespace apmf::equipgate {
                 const RE::FormID driven = handSeat.proxy ? handSeat.proxy : handSeat.spell;
                 if (driven != 0 && subjectForm == driven) {
                     std::uint32_t yes = 0, no = 0;
-                    if (RowVerdictDue(fid, subjectForm, engineSays, yes, no)) {
+                    if (RowVerdictDue(fid, subjectForm, static_cast<int>(callerHand), vt, engineSays, yes, no)) {
                         const char* cls = ResolveTypeName(vt);
                         spdlog::info("[t2a row verdict] 0x{} CheckShouldEquip item=0x{} '{}' class={} hand={} (the driven form "
                                      "of the cast claim, claim spell 0x{}{}, target 0x{}): the ENGINE's 0x0F says {}; no "

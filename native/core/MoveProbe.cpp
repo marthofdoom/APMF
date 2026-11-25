@@ -34,6 +34,12 @@ extern "C" __declspec(dllimport) unsigned long __stdcall GetPrivateProfileIntA(
 //       +0x38 is read. Request: +0x58 goal, +0x8C pad, +0x82 bit 1 and +0xBA bit 0 = the area is not asked
 //       (0x55B83C / 0x4FFEEC / 0x5636AC)
 //   area: +0x2C active, +0x30 centre, +0x48 radius (channels/CombatApproach.cpp).
+// What a status 5 can look like here: CombatPath::Start (0x8C3A00) ends in `status = 1` on every road, also after
+// the request builders (0x8C4B90, the re-request 0x8C4ED0) set 5 because the area refused the goal. So a refused
+// build reaches Update as 1 and leaves it as 5 through the timeout (0x8C38E9, `now - +20 > +24`), the only writer of
+// 5 inside Update next to the async build's answer (entered as 6, 0x8C7970). Entered as 1 = nothing followed since
+// the last Start; 2 = a path behaviour was running; 3 = following had paused. A re-request resets 2 / 3 to 1, so the
+// claim record also keeps whether 2 was seen since the leaf's act. +28 is stamped on each Update the timeout spares.
 // SetFailed and Ascend (the leaf's status 5 exit, 0x85E0A0 / 0x85DD70) only write thread words: the frame is
 // popped later by the runner, so it is still there when the leaf's own update returns. It is read only when
 // the thread's frame offset is what it was before the call; anything else is counted and not read.
@@ -76,18 +82,19 @@ namespace apmf::moveprobe {
             bool             bodyAtLast = false;
             std::size_t      lastBody = kFree;
             std::array<Bucket, kBodyN> body{};
-            std::array<Bucket, kLeafN> byLeaf{};          // by the last movement leaf entered
+            std::array<Bucket, kLeafN> byLeaf{};          // by the running movement leaf
             Bucket           noLeaf{};
             // Combat threads.
             std::array<std::atomic<std::uint32_t>, kLeafN> acts{};
-            std::atomic<std::uint32_t> lastMove{ ~0u };
+            std::atomic<std::uint32_t> lastMove{ ~0u };    // the running movement leaf (act seen, pop not yet)
             std::atomic<std::uint64_t> rtcaActMs{ 0 };
             std::atomic<std::uint32_t> attackLeaf{ ~0u };  // the running attack leaf (act seen, pop not yet)
             std::atomic<std::uint64_t> attackMs{ 0 };
             std::atomic<std::uintptr_t> aimVt{ 0 };        // the current aim controller's vtable, 0 = none
             std::atomic<std::uint64_t> aimMs{ 0 };         // when S1 last read it (0 = never)
             std::atomic<std::uint32_t> aimChanges{ 0 };
-            std::atomic<std::uint32_t> p2Updates{ 0 }, p2Build{ 0 }, p2Follow{ 0 }, p2Lines{ 0 };
+            std::atomic<std::uint32_t> p2Updates{ 0 }, p2Never{ 0 }, p2Lost{ 0 }, p2Async{ 0 }, p2Other{ 0 }, p2Lines{ 0 };
+            std::atomic<bool>          p2Ran{ false };     // status 2 seen since the leaf's last act
             std::atomic<std::uint64_t> p2LineMs{ 0 };
         };
         constexpr std::uint32_t kP2LinesPerClaim = 40;
@@ -151,7 +158,7 @@ namespace apmf::moveprobe {
             const auto       now = apmf::clock::MonotonicMs();
             std::uint64_t    actMs = 0;
             std::uint32_t    updates = 0;
-            bool             line = false;
+            bool             line = false, ran = false;
             const auto       prev = At<std::int32_t>(path, 0x18);
             {
                 std::shared_lock lk(g_mx);
@@ -162,8 +169,11 @@ namespace apmf::moveprobe {
                 }
                 Rec& r  = *rit->second;
                 updates = r.p2Updates.fetch_add(1, std::memory_order_relaxed) + 1;
+                if (status == 2 || prev == 2) r.p2Ran.store(true, std::memory_order_relaxed);
                 if (status != 5) return;
-                (prev == 5 ? r.p2Build : r.p2Follow).fetch_add(1, std::memory_order_relaxed);
+                ran = r.p2Ran.load(std::memory_order_relaxed);
+                (prev == 1 && !ran ? r.p2Never : prev >= 1 && prev <= 3 ? r.p2Lost : prev == 6 ? r.p2Async : r.p2Other)
+                    .fetch_add(1, std::memory_order_relaxed);
                 actMs = r.rtcaActMs.load(std::memory_order_relaxed);
                 const auto last = r.p2LineMs.load(std::memory_order_relaxed);
                 if (now - last >= kP2LineMs && r.p2Lines.load(std::memory_order_relaxed) < kP2LinesPerClaim) {
@@ -192,20 +202,28 @@ namespace apmf::moveprobe {
                         if (area) {
                             const float dx = gx - At<float>(area, 0x30), dy = gy - At<float>(area, 0x34),
                                         dz = gz - At<float>(area, 0x38);
-                            req += fmt::format(", goal to area centre {:.0f} of R {:.0f}",
-                                               std::sqrt(dx * dx + dy * dy + dz * dz), At<float>(area, 0x48));
+                            // The engine's own test (CombatAreaRadius 0x06, AE 0x7F9B40): dist^2 < (R + pad)^2.
+                            const float d2 = dx * dx + dy * dy + dz * dz, lim = At<float>(area, 0x48) + pad;
+                            req += fmt::format(", goal to area centre {:.0f} of R {:.0f} + pad: {}", std::sqrt(d2),
+                                               At<float>(area, 0x48), d2 < lim * lim ? "goal INSIDE the area" : "goal OUTSIDE the area");
                         }
                     }
                 }
             }
             const auto* st = actor->AsActorState();
             spdlog::info("[moveprobe P2] 0x{} '{}' RETURN PATH STATUS 5: previous status {} ({}), update {} of this claim's, "
-                         "{} ms after the leaf's act; path +1C={} +20={:.3f} +24={:.3f} +28={:.3f} +2C={:.3f}; {}; area {}; "
+                         "{} ms after the leaf's act; path +1C={} +20={:.3f} +24={:.3f} +28={:.3f} +2C={:.3f} (last spared update "
+                         "{:.3f} after +20, timeout {:.3f}); {}; area {}; "
                          "body: attack state {}, knock state {}, staggered {}, weapon {}.",
                          Hex(fid), actor->GetName() ? actor->GetName() : "?", prev,
-                         prev == 5 ? "failed at BUILD / start" : "failed while FOLLOWING or at a re-request", updates,
+                         prev == 1 ? (ran ? "a RE-REQUEST after following was refused or found no path"
+                                          : "NEVER FOLLOWED: the build was refused or found no path")
+                         : prev == 2 ? "LOST while a path was running"
+                         : prev == 3 ? (ran ? "LOST, following had paused" : "paused, no running path seen since the act")
+                         : prev == 6 ? "the ASYNC build failed" : "unexpected", updates,
                          actMs != 0 ? now - actMs : 0, At<std::uint32_t>(path, 0x1C), At<float>(path, 0x20),
-                         At<float>(path, 0x24), At<float>(path, 0x28), At<float>(path, 0x2C), req,
+                         At<float>(path, 0x24), At<float>(path, 0x28), At<float>(path, 0x2C),
+                         At<float>(path, 0x28) - At<float>(path, 0x20), At<float>(path, 0x24), req,
                          area ? (At<std::uint8_t>(area, 0x2C) == 0 ? "switched OFF by this" : "still active") : "none",
                          static_cast<std::uint32_t>(st->GetAttackState()), static_cast<std::uint32_t>(st->GetKnockState()),
                          static_cast<std::uint32_t>(st->actorState2.staggered), st->IsWeaponDrawn() ? "drawn" : "sheathed");
@@ -230,8 +248,8 @@ namespace apmf::moveprobe {
             for (std::size_t b = 0; b < kBodyN; ++b)
                 out += fmt::format(" {} +{:.0f} / -{:.0f} ({} samples){}", kBodyName[b], r.body[b].toward, r.body[b].away,
                                    r.body[b].n, b + 1 < kBodyN ? "," : ";");
-            out += " by the last movement leaf entered (body free only):";
-            if (r.noLeaf.n) out += fmt::format(" none yet +{:.0f} / -{:.0f}", r.noLeaf.toward, r.noLeaf.away);
+            out += " by the movement leaf running (the last one entered, until its pop; body free only):";
+            if (r.noLeaf.n) out += fmt::format(" none +{:.0f} / -{:.0f}", r.noLeaf.toward, r.noLeaf.away);
             for (std::size_t i = 0; i < kLeafN; ++i)
                 if (r.byLeaf[i].n)
                     out += fmt::format(" {} +{:.0f} / -{:.0f} ({})", g_name[i], r.byLeaf[i].toward, r.byLeaf[i].away, r.byLeaf[i].n);
@@ -241,9 +259,9 @@ namespace apmf::moveprobe {
                 if (const auto n = r.acts[i].load(std::memory_order_relaxed)) a.emplace_back(n, i);
             std::sort(a.rbegin(), a.rend());
             for (const auto& [n, i] : a) out += fmt::format(" {} {}", g_name[i], n);
-            out += fmt::format("; [P2] return updates {}, status 5 at build {}, while following {}; [P3] aim holder changes {}, "
+            out += fmt::format("; [P2] return updates {}, status 5 never followed {}, lost or re-request {}, async build {}, other {}; [P3] aim holder changes {}, "
                                "last {}; since load: return updates {}, status 5 {}, on unwatched actors {}, frame anomalies {}.",
-                               r.p2Updates.load(), r.p2Build.load(), r.p2Follow.load(), r.aimChanges.load(),
+                               r.p2Updates.load(), r.p2Never.load(), r.p2Lost.load(), r.p2Async.load(), r.p2Other.load(), r.aimChanges.load(),
                                VtText(r.aimVt.load()), g_p2Updates.load(), g_p2Fail.load(), g_p2Unwatched.load(), g_p2Anomaly.load());
             return out;
         }
@@ -253,7 +271,7 @@ namespace apmf::moveprobe {
     bool On() { return g_on.load(std::memory_order_relaxed); }
     bool Watching() { return g_watching.load(std::memory_order_relaxed) != 0; }
 
-    void NoteAct(std::uintptr_t a_vt, RE::FormID a_actor) {
+    void NoteAct(std::uintptr_t a_vt, RE::FormID a_actor, bool a_denied) {
         if (a_actor == 0) return;
         const auto it = g_idx.find(a_vt);
         if (it == g_idx.end()) return;
@@ -264,8 +282,12 @@ namespace apmf::moveprobe {
         if (rit == g_recs.end()) return;
         Rec& r = *rit->second;
         r.acts[i].fetch_add(1, std::memory_order_relaxed);
+        if (a_denied) return;   // force-failed: it was entered and never ran
         if (g_kind[i] & kMove) r.lastMove.store(i, std::memory_order_relaxed);
-        if (i == g_rtcaIdx) r.rtcaActMs.store(now, std::memory_order_relaxed);
+        if (i == g_rtcaIdx) {
+            r.rtcaActMs.store(now, std::memory_order_relaxed);
+            r.p2Ran.store(false, std::memory_order_relaxed);
+        }
         if (g_kind[i] & kAttack) {
             r.attackMs.store(now, std::memory_order_relaxed);
             r.attackLeaf.store(i, std::memory_order_relaxed);
@@ -275,17 +297,22 @@ namespace apmf::moveprobe {
     void NotePop(std::uintptr_t a_vt, RE::FormID a_actor) {
         if (a_actor == 0) return;
         const auto it = g_idx.find(a_vt);
-        if (it == g_idx.end() || (g_kind[it->second] & kAttack) == 0) return;
+        if (it == g_idx.end() || g_kind[it->second] == 0) return;
         std::shared_lock lk(g_mx);
         if (const auto rit = g_recs.find(a_actor); rit != g_recs.end()) {
-            auto want = it->second;
-            rit->second->attackLeaf.compare_exchange_strong(want, ~0u, std::memory_order_relaxed);
+            auto a = it->second, m = it->second;   // an index is in at most the slots of its kinds
+            rit->second->attackLeaf.compare_exchange_strong(a, ~0u, std::memory_order_relaxed);
+            rit->second->lastMove.compare_exchange_strong(m, ~0u, std::memory_order_relaxed);
         }
     }
 
     void NoteAim(RE::FormID a_actor, RE::CombatController* a_cc) {
-        // S1 runs inside this controller's own UpdateAreas, on the thread that swaps currentAimController
-        // (AE 0x55A360 / SE 0x4FED51 / 1.7.104 0x5621D0), so the pointer cannot be replaced under this read.
+        // currentAimController (+0x70 AE, 1.7.104 / +0x68 SE) is rewritten by the controller's recompute, under its aim
+        // lock (AE 0x55BBE0 at 0x55BC7D, 0x55BCE0 at 0x55BD9F; SE 0x500240 at 0x5002D3; 1.7.104 0x563A50, 0x563B50),
+        // called from UpdateAreas's caller (AE 0x5589B0 at 0x558AE8; 1.7.104 0x560820), from the aim update (AE 0x55BB10)
+        // and from an aim controller's destructor (AE 0x7F8820 -> 0x55AA50), which recomputes BEFORE the memory is
+        // freed. S1 runs inside UpdateAreas, so on the ordinary road nothing replaces the pointer under this read. The
+        // residual is a destructor on another thread: only the probe (default off) has it.
         const auto* aim = reinterpret_cast<const std::uintptr_t*>(a_cc->GetRuntimeData().currentAimController);
         const std::uintptr_t vt = aim ? *aim : 0;
         std::shared_lock lk(g_mx);

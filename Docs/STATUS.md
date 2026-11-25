@@ -9,7 +9,7 @@ build/finding/workflow change.
 MFO plan `Docs/research/2026-11/tight-movement-plan.md` sections 7(b) step 1 and 9, package H-P. Agentlog
 `_agentlogs/harbinger/hp-hf.md`. Passive, default off: a session needs `[Probe] bMoveProbe=1`, `bRowVerdict=1` and
 `[CombatApproach] bApproachGaitProbe=1` (its default). Read: P1 SUMMARY (who moved him), `RETURN PATH STATUS 5` (P2: previous
-status, `+24` the timeout, request flags, body), P3 on GAIT PROBE lines (aim holder in BACKPEDAL against FORWARD samples),
+status 1 = never followed or a re-request refused, 2 / 3 = lost, 6 = async build; goal inside / outside the area, `+24` the timeout, request flags, body), P3 on GAIT PROBE lines (aim holder in BACKPEDAL against FORWARD samples),
 `[t2a row verdict]` (ward / summon / bound item). Aim controller vtable RVAs (1.6.1170 / 1.5.97 / 1.7.104): TrackTarget
 0x18C58E8 / 0x167E1A8 / 0x1943E88, Melee 0x18C5948 / 0x167E228 / 0x1943EE8, Projectile 0x18C59A8 / 0x167E2A8 / 0x1943F48,
 Disable 0x18C5A08 / 0x167E328 / 0x1943FA8 (the line prints the class name too).

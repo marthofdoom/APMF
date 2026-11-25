@@ -2127,13 +2127,13 @@ ch.23), `channels/CombatApproach.cpp` (S1 decision, `AttributeYield`, the drift 
 MFO `Docs/research/2026-11/tight-movement-plan.md` section 9. Default OFF (installs nothing, `On()` / `Watching()` false). A
 record per live ch.24 claim, made by `Sample` (ch.24 `Poll`, game thread, live + in combat), closed by `Finish` (ch.24 `End`
 and channel `Release`), dropped by `Reset` (ch.24 `ResetAll`). `g_mx` is a leaf lock; combat threads take it shared.
-- **P1:** `actiongate::ActThunkBody` -> `NoteAct` (entered, a force-failed act included) plus displacement per Poll sample,
-  split by body state and by the last movement leaf entered. One `[moveprobe P1] ... SUMMARY` per claim.
+- **P1:** `actiongate::ActThunk` -> `NoteAct` after the act (a force-failed act counts as entered and sets no state) plus displacement per Poll sample,
+  split by body state and by the running movement leaf (cleared at its pop). One `[moveprobe P1] ... SUMMARY` per claim.
 - **P2:** the ONE new seat: Return To Combat Area leaf `update()` 0x04, chaining, observe-only (`ReturnUpdateThunk`). After the
   original, on status 5, it reads the leaf frame (`[thread+0]+[thread+0x120]`), the `CombatPath` and its request. Offsets are in
   the file header and `VERIFIED-ADDRESSES.md`; frame offset must be unchanged across the call or nothing is read.
-- **P3:** S1 -> `NoteAim` (the controller's current aim controller, its vtable class), `PopThunk` -> `NotePop` (the attack leaf
-  ended); the text goes on the ch.24 gait line.
+- **P3:** S1 -> `NoteAim` (the controller's current aim controller, its vtable class), `PopThunk` -> `NotePop` (the attack or
+  movement leaf ended); the text goes on the ch.24 gait line.
 - **What breaks:** NoteAim is only safe inside the controller's own update (S1). P2 chained under any later 0x04 hook (the
   strict order's M3 seat takes this slot: install it over the probe, never instead of the chain).
 - **`[Probe] bRowVerdict`** lives in `core/EquipGate.cpp` (the engine's 0x0F for a claim's driven form, no-admission rows).
